@@ -1,0 +1,39 @@
+Gemini YouTube Dubber v0.2.4 FULL REPLACEMENT
+
+This package does NOT run a patch script.
+
+Copy the CONTENTS of this ZIP directly into:
+C:\Faramarz\GitHub\gemini-youtube-dubber-github
+
+Choose:
+Replace the files in the destination
+
+Files replaced:
+- dubber\gemini_client.py
+- dubber\cloud_pipeline.py
+- dubber\__init__.py
+- .github\workflows\cloud-dub.yml
+- .env.example
+
+Why v0.2.4:
+- Gemini video analysis runs with Interactions Background Execution.
+- The long server job gets an Interaction ID and is polled every 5 seconds.
+- If a poll connection resets, the same server-side task continues.
+- Analysis is bounded to 240 seconds per model in GitHub Cloud.
+- Fallback remains: 3.7 Flash -> 3.6 Flash -> 3.5 Flash.
+- transcript.json is saved immediately after successful analysis.
+- If TTS later fails, process attempt 2 reuses the transcript checkpoint.
+- Whole-process attempts reduced from 3 to 2.
+- TTS retry ceiling reduced to 4 in GitHub Cloud.
+- Workflow timeout reduced to 45 minutes.
+- Partial checkpoint output is uploaded on failure when available.
+
+After copy:
+1. Open GitHub Desktop.
+2. Confirm changed files.
+3. Summary:
+   Use Gemini background execution and checkpoints (v0.2.4)
+4. Commit to main.
+5. Push origin.
+6. Start a BRAND-NEW Actions -> Cloud Dub -> Run workflow.
+7. Do NOT re-run old Run #4.

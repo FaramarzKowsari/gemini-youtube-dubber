@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Callable
 from .chunking import build_precise_chunks, build_smart_chunks
 from .gemini_client import GeminiDubClient
 from .media import compose_dub_track, fit_audio_to_duration
+from .models import Transcript
 from .subtitles import write_srt
 
 ProgressFn = Callable[[float, str], None]
@@ -47,6 +49,7 @@ def _speaker_roles_and_voices(
     speaker_roles: dict[str, str] = {}
     for index, speaker in enumerate(distinct):
         speaker_roles[speaker] = "Dubber A" if index % 2 == 0 else "Dubber B"
+
     return speaker_roles, {
         "Dubber A": primary_voice,
         "Dubber B": secondary_voice,
@@ -66,33 +69,76 @@ def run_cloud_audio_dubbing(
     smart_chunk_seconds: float = 60.0,
     smart_chunk_max_gap: float = 2.0,
 ) -> CloudDubResult:
-    """Cloud phase: Gemini analyzes the YouTube URL directly; GitHub never downloads it."""
+    """Cloud phase: Gemini handles analysis/TTS; GitHub never downloads YouTube."""
+
     if not youtube_url or not youtube_url.strip():
         raise ValueError("youtube_url is required")
 
-    root = output_root or Path(
-        tempfile.mkdtemp(prefix="gemini_cloud_dubber_")
-    )
+    root = output_root or Path(tempfile.mkdtemp(prefix="gemini_cloud_dubber_"))
     root.mkdir(parents=True, exist_ok=True)
+
     work = root / "work"
     out = root / "output"
     work.mkdir(exist_ok=True)
     out.mkdir(exist_ok=True)
 
-    _progress(
-        progress,
-        0.05,
-        "Analyzing YouTube directly with Gemini (no cloud download)",
+    transcript_json = out / "transcript.json"
+
+    reuse_checkpoint = (
+        os.getenv("GEMINI_REUSE_TRANSCRIPT_CHECKPOINT", "1")
+        .strip()
+        .lower()
+        not in {"0", "false", "no"}
     )
 
-    def _on_transcribe_wait(seconds: float, message: str) -> None:
-        _progress(progress, 0.05, message)
+    transcript: Transcript
 
-    transcript = gemini.transcribe_youtube(
-        youtube_url.strip(),
-        target_language,
-        on_wait=_on_transcribe_wait,
-    )
+    if (
+        reuse_checkpoint
+        and transcript_json.exists()
+        and transcript_json.stat().st_size > 20
+    ):
+        _progress(
+            progress,
+            0.05,
+            "Checkpoint found: reusing transcript/translation; "
+            "Gemini video analysis will NOT run again",
+        )
+        transcript = Transcript.model_validate(
+            json.loads(transcript_json.read_text(encoding="utf-8"))
+        )
+    else:
+        _progress(
+            progress,
+            0.05,
+            "Starting reconnect-safe Gemini background video analysis",
+        )
+
+        def _on_transcribe_wait(seconds: float, message: str) -> None:
+            _progress(progress, 0.05, message)
+
+        transcript = gemini.transcribe_youtube(
+            youtube_url.strip(),
+            target_language,
+            on_wait=_on_transcribe_wait,
+        )
+        if not transcript.segments:
+            raise RuntimeError("No spoken dialogue was detected")
+
+        transcript_json.write_text(
+            json.dumps(
+                transcript.model_dump(),
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        _progress(
+            progress,
+            0.16,
+            "Transcript checkpoint saved; later process retries can skip video analysis",
+        )
+
     if not transcript.segments:
         raise RuntimeError("No spoken dialogue was detected")
 
@@ -101,9 +147,9 @@ def run_cloud_audio_dubbing(
         seg.start = max(0.0, float(seg.start))
         seg.end = max(seg.start + 0.25, float(seg.end))
         valid_segments.append(seg)
+
     transcript.segments = valid_segments
 
-    transcript_json = out / "transcript.json"
     transcript_json.write_text(
         json.dumps(
             transcript.model_dump(),
@@ -112,6 +158,7 @@ def run_cloud_audio_dubbing(
         ),
         encoding="utf-8",
     )
+
     subtitles = write_srt(
         transcript.segments,
         out / "dubbed.srt",
@@ -142,25 +189,29 @@ def run_cloud_audio_dubbing(
     _progress(
         progress,
         0.18,
-        f"{engine_label} plan: "
+        f"{engine_label}: "
         f"{len(transcript.segments)} dialogue segments -> "
         f"{len(chunks)} Gemini TTS requests",
     )
 
     chunk_audio: list[tuple[float, Path]] = []
     total_chunks = len(chunks)
+
     for idx, chunk in enumerate(chunks, start=1):
         _progress(
             progress,
             0.20 + 0.62 * (idx - 1) / max(1, total_chunks),
-            f"Generating dubbed speech chunk {idx}/{total_chunks} · "
-            f"{len(chunk.segments)} lines",
+            f"TTS chunk {idx}/{total_chunks} · "
+            f"{len(chunk.segments)} lines · "
+            f"{chunk.duration:.1f}s timeline span",
         )
+
         raw = work / f"tts_chunk_{idx:04d}_raw.wav"
         fitted = work / f"tts_chunk_{idx:04d}.wav"
         prompt = chunk.tts_prompt(target_language)
         chunk_voice_config = {
-            role: role_voices[role] for role in chunk.roles
+            role: role_voices[role]
+            for role in chunk.roles
         }
 
         def _on_tts_wait(
@@ -183,6 +234,7 @@ def run_cloud_audio_dubbing(
             raw,
             on_wait=_on_tts_wait,
         )
+
         fit_audio_to_duration(
             raw,
             fitted,
@@ -192,14 +244,8 @@ def run_cloud_audio_dubbing(
 
     timeline_end = max(
         0.25,
-        max(
-            (seg.end for seg in transcript.segments),
-            default=0.25,
-        ),
-        max(
-            (chunk.end for chunk in chunks),
-            default=0.25,
-        ),
+        max((seg.end for seg in transcript.segments), default=0.25),
+        max((chunk.end for chunk in chunks), default=0.25),
     )
 
     _progress(
@@ -207,6 +253,7 @@ def run_cloud_audio_dubbing(
         0.88,
         "Building cloud dubbing audio track",
     )
+
     dub_audio = compose_dub_track(
         timeline_end,
         chunk_audio,
@@ -214,8 +261,8 @@ def run_cloud_audio_dubbing(
     )
 
     manifest_data = {
-        "format_version": 1,
-        "mode": "hybrid-cloud-audio",
+        "format_version": 2,
+        "mode": "hybrid-cloud-background-checkpoint",
         "youtube_url": youtube_url.strip(),
         "target_language": target_language,
         "primary_voice": primary_voice,
@@ -234,6 +281,7 @@ def run_cloud_audio_dubbing(
             "to download the source video locally and create the MP4."
         ),
     }
+
     manifest = out / "manifest.json"
     manifest.write_text(
         json.dumps(
@@ -249,6 +297,7 @@ def run_cloud_audio_dubbing(
         1.0,
         "Cloud dubbing package ready",
     )
+
     return CloudDubResult(
         dub_audio,
         subtitles,

@@ -47,11 +47,18 @@ jobs:
   dub:
     name: Generate dub audio on GitHub runner
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 45
+
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_DUBBER_CACHE_DIR: .tts-cache
       GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-3.6-flash,gemini-3.5-flash
+      GEMINI_TRANSCRIBE_TIMEOUT_SECONDS: '240'
+      GEMINI_TRANSCRIBE_POLL_SECONDS: '5'
+      GEMINI_HTTP_TIMEOUT_MS: '120000'
+      GEMINI_TRANSCRIBE_MAX_RETRIES: '1'
+      GEMINI_TTS_MAX_RETRIES: '4'
+      GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
 
     steps:
       - name: Checkout
@@ -93,14 +100,22 @@ jobs:
           ORIGINAL_AUDIO_PERCENT: ${{ inputs.original_audio_percent }}
         run: |
           set +e
+
           SECONDARY_ARG=""
           if [ "$SECONDARY_VOICE" != "Same" ]; then
             SECONDARY_ARG="--secondary-voice $SECONDARY_VOICE"
           fi
 
           LAST_STATUS=1
-          for ATTEMPT in 1 2 3; do
-            echo "=== Cloud Dub process attempt ${ATTEMPT}/3 ==="
+
+          for ATTEMPT in 1 2; do
+            echo "============================================================"
+            echo "Cloud Dub process attempt ${ATTEMPT}/2"
+            echo "Gemini Background Execution: enabled"
+            echo "Analysis timeout: 240s per model"
+            echo "Transcript checkpoint reuse: enabled"
+            echo "============================================================"
+
             python cloud_cli.py \
               --youtube-url "$YOUTUBE_URL" \
               --target-language "$TARGET_LANGUAGE" \
@@ -111,23 +126,33 @@ jobs:
               --tts-rpm 3 \
               --original-audio-percent "$ORIGINAL_AUDIO_PERCENT" \
               --output-root cloud-output
+
             LAST_STATUS=$?
 
             if [ "$LAST_STATUS" -eq 0 ]; then
               exit 0
             fi
 
-            if [ "$ATTEMPT" -lt 3 ]; then
-              DELAY=$((30 * ATTEMPT))
-              echo "::warning::Cloud process failed with code ${LAST_STATUS}; retrying in ${DELAY}s. TTS cache remains available."
-              sleep "$DELAY"
+            if [ "$ATTEMPT" -lt 2 ]; then
+              echo "::warning::Process failed with code ${LAST_STATUS}; retrying in 20s. If transcript.json exists, video analysis will be skipped."
+              sleep 20
             fi
           done
 
-          echo "::error::Cloud Dub failed after 3 process attempts."
+          echo "::error::Cloud Dub failed after 2 bounded process attempts."
           exit "$LAST_STATUS"
 
+      - name: Upload checkpoint on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cloud-dub-checkpoint-${{ github.run_number }}
+          path: cloud-output/output/
+          if-no-files-found: ignore
+          retention-days: 1
+
       - name: Upload dub audio package
+        if: success()
         uses: actions/upload-artifact@v7
         with:
           name: cloud-dub-package-${{ github.run_number }}
@@ -136,6 +161,7 @@ jobs:
           retention-days: 2
 
       - name: Finalization instructions
+        if: success()
         shell: bash
         run: |
           {

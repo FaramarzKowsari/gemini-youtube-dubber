@@ -54,7 +54,6 @@ TRANSCRIPT_SCHEMA = {
 
 
 def _structured_json_format() -> dict:
-    """Current Interactions API structured-output shape (May 2026+ revision)."""
     return {
         "type": "text",
         "mime_type": "application/json",
@@ -88,15 +87,40 @@ class GeminiDubClient:
         if not api_key:
             raise ValueError("GEMINI_API_KEY is missing")
 
+        http_timeout_ms = max(
+            10000,
+            int(os.getenv("GEMINI_HTTP_TIMEOUT_MS", "120000")),
+        )
         self.client = genai.Client(
             api_key=api_key,
-            http_options={"timeout": int(os.getenv("GEMINI_HTTP_TIMEOUT_MS", "120000"))},
+            http_options={"timeout": http_timeout_ms},
         )
+
         self.transcribe_model = transcribe_model
         self.tts_model = tts_model
         self.tts_requests_per_minute = max(0, int(tts_requests_per_minute))
-        self.tts_max_retries = max(0, int(tts_max_retries))
-        self.transcribe_max_retries = max(0, int(transcribe_max_retries))
+        self.tts_max_retries = max(
+            0,
+            int(os.getenv("GEMINI_TTS_MAX_RETRIES", str(tts_max_retries))),
+        )
+        self.transcribe_max_retries = max(
+            0,
+            int(
+                os.getenv(
+                    "GEMINI_TRANSCRIBE_MAX_RETRIES",
+                    str(transcribe_max_retries),
+                )
+            ),
+        )
+        self.transcribe_timeout_seconds = max(
+            30.0,
+            float(os.getenv("GEMINI_TRANSCRIBE_TIMEOUT_SECONDS", "600")),
+        )
+        self.transcribe_poll_seconds = max(
+            2.0,
+            float(os.getenv("GEMINI_TRANSCRIBE_POLL_SECONDS", "5")),
+        )
+
         self._tts_pacer = RequestPacer(self.tts_requests_per_minute)
         self.tts_cache_enabled = bool(tts_cache_enabled)
 
@@ -117,19 +141,6 @@ class GeminiDubClient:
         self.transcribe_models = _unique_models(
             self.transcribe_model,
             transcribe_fallback_models,
-        )
-
-        self.transcribe_timeout_seconds = max(
-            30.0, float(os.getenv("GEMINI_TRANSCRIBE_TIMEOUT_SECONDS", "600"))
-        )
-        self.transcribe_poll_seconds = max(
-            2.0, float(os.getenv("GEMINI_TRANSCRIBE_POLL_SECONDS", "5"))
-        )
-        self.transcribe_max_retries = max(
-            0, int(os.getenv("GEMINI_TRANSCRIBE_MAX_RETRIES", str(self.transcribe_max_retries)))
-        )
-        self.tts_max_retries = max(
-            0, int(os.getenv("GEMINI_TTS_MAX_RETRIES", str(self.tts_max_retries)))
         )
 
     @staticmethod
@@ -153,7 +164,11 @@ Requirements:
 """.strip()
 
     @staticmethod
-    def _notify(callback: WaitCallback | None, seconds: float, message: str) -> None:
+    def _notify(
+        callback: WaitCallback | None,
+        seconds: float,
+        message: str,
+    ) -> None:
         if callback:
             callback(max(0.0, float(seconds)), message)
 
@@ -164,7 +179,6 @@ Requirements:
         *,
         on_wait: WaitCallback | None = None,
     ):
-        # Poll one server-side Gemini interaction without holding a long HTTP connection.
         started = time.monotonic()
         last_notice = -30.0
         poll_failures = 0
@@ -182,17 +196,18 @@ Requirements:
                 )
 
             try:
-                interaction = self.client.interactions.get(id=interaction_id)
+                interaction = self.client.interactions.get(interaction_id)
                 poll_failures = 0
             except Exception as exc:
                 if not is_retryable_gemini_error(exc):
                     raise
+
                 poll_failures += 1
-                delay = min(15.0, 2.0 + poll_failures * 2.0)
+                delay = min(15.0, 2.0 + 2.0 * poll_failures)
                 self._notify(
                     on_wait,
                     delay,
-                    f"Gemini analysis is still running server-side; "
+                    "Gemini analysis is still running server-side; "
                     f"poll connection failed temporarily. Reconnecting in {delay:.0f}s",
                 )
                 time.sleep(delay)
@@ -241,7 +256,6 @@ Requirements:
         target_language: str,
         on_wait: WaitCallback | None = None,
     ) -> Transcript:
-        # Reconnect-safe background video analysis with stable-model failover.
         last_error: BaseException | None = None
 
         for model_index, model in enumerate(self.transcribe_models):
@@ -254,6 +268,7 @@ Requirements:
                         0,
                         f"Starting Gemini background video analysis with {model}",
                     )
+
                     interaction = self.client.interactions.create(
                         model=model,
                         input=interaction_input,
@@ -261,6 +276,7 @@ Requirements:
                         background=True,
                     )
                     interaction_id = str(interaction.id)
+
                     self._notify(
                         on_wait,
                         0,
@@ -280,7 +296,7 @@ Requirements:
 
                 except Exception as exc:
                     last_error = exc
-                    lower = str(exc).lower()
+                    text = str(exc).lower()
 
                     if isinstance(exc, TimeoutError) and has_fallback:
                         next_model = self.transcribe_models[model_index + 1]
@@ -293,7 +309,7 @@ Requirements:
                         break
 
                     temporary_background_failure = any(
-                        signal in lower
+                        signal in text
                         for signal in (
                             "high demand",
                             "temporarily unavailable",
@@ -313,7 +329,7 @@ Requirements:
                             break
                         raise
 
-                    if "high demand" in lower and has_fallback:
+                    if "high demand" in text and has_fallback:
                         next_model = self.transcribe_models[model_index + 1]
                         self._notify(
                             on_wait,
@@ -346,6 +362,7 @@ Requirements:
                             f"{model} is unavailable; switching to {next_model}",
                         )
                         break
+
                     raise
 
         raise RuntimeError(
@@ -398,12 +415,20 @@ Requirements:
         )
 
     @staticmethod
-    def _parse_transcript(text: str, target_language: str) -> Transcript:
+    def _parse_transcript(
+        text: str,
+        target_language: str,
+    ) -> Transcript:
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Gemini returned invalid JSON: {exc}") from exc
-        data["target_language"] = data.get("target_language") or target_language
+            raise RuntimeError(
+                f"Gemini returned invalid JSON: {exc}"
+            ) from exc
+
+        data["target_language"] = (
+            data.get("target_language") or target_language
+        )
         transcript = Transcript.model_validate(data)
         transcript.segments.sort(key=lambda s: (s.start, s.end))
         return transcript
@@ -437,10 +462,13 @@ Requirements:
         on_wait: WaitCallback | None = None,
     ) -> Path:
         if not speaker_voices:
-            raise ValueError("At least one Gemini TTS voice is required")
+            raise ValueError(
+                "At least one Gemini TTS voice is required"
+            )
         if len(speaker_voices) > 2:
             raise ValueError(
-                "Gemini multi-speaker TTS supports at most two speakers per request"
+                "Gemini multi-speaker TTS supports at most "
+                "two speakers per request"
             )
 
         output_wav.parent.mkdir(parents=True, exist_ok=True)
@@ -449,6 +477,7 @@ Requirements:
             speaker_voices,
             target_language,
         )
+
         if (
             self.tts_cache_enabled
             and cache_path.exists()
@@ -467,18 +496,25 @@ Requirements:
             ]
 
         last_error: BaseException | None = None
+
         for attempt in range(self.tts_max_retries + 1):
             self._tts_pacer.wait_for_slot(on_wait)
+
             try:
                 interaction = self.client.interactions.create(
                     model=self.tts_model,
                     input=prompt,
                     response_format={"type": "audio"},
-                    generation_config={"speech_config": speech_config},
+                    generation_config={
+                        "speech_config": speech_config
+                    },
                 )
                 audio = interaction.output_audio
                 if not audio or not audio.data:
-                    raise RuntimeError("Gemini TTS returned no audio")
+                    raise RuntimeError(
+                        "Gemini TTS returned no audio"
+                    )
+
                 pcm = base64.b64decode(audio.data)
                 with wave.open(str(output_wav), "wb") as wf:
                     wf.setnchannels(1)
@@ -488,27 +524,41 @@ Requirements:
 
                 if self.tts_cache_enabled:
                     try:
-                        self.cache_dir.mkdir(parents=True, exist_ok=True)
+                        self.cache_dir.mkdir(
+                            parents=True,
+                            exist_ok=True,
+                        )
                         shutil.copy2(output_wav, cache_path)
                     except OSError:
                         pass
+
                 return output_wav
+
             except Exception as exc:
                 last_error = exc
+
                 if (
                     not is_retryable_gemini_error(exc)
                     or attempt >= self.tts_max_retries
                 ):
                     raise
 
-                fallback = min(60.0, 4.0 * (2 ** attempt))
-                delay = retry_after_seconds(exc, default=fallback) + 1.0
+                fallback = min(
+                    30.0,
+                    3.0 * (2 ** attempt),
+                )
+                delay = retry_after_seconds(
+                    exc,
+                    default=fallback,
+                ) + 1.0
+
                 self._tts_pacer.cooldown(
                     delay,
                     on_wait,
                     message=(
-                        f"Gemini rate/server limit encountered; automatic retry "
-                        f"{attempt + 1}/{self.tts_max_retries} in {delay:.1f}s"
+                        "Gemini TTS temporary error; "
+                        f"retry {attempt + 1}/{self.tts_max_retries} "
+                        f"in {delay:.1f}s"
                     ),
                 )
 
@@ -525,7 +575,6 @@ Requirements:
         *,
         on_wait: WaitCallback | None = None,
     ) -> Path:
-        """Synthesize one Smart Chunk in one Gemini request (one or two voices)."""
         return self._synthesize_audio(
             prompt=prompt,
             speaker_voices=speaker_voices,
@@ -544,16 +593,18 @@ Requirements:
         *,
         on_wait: WaitCallback | None = None,
     ) -> Path:
-        """Compatibility method for precise one-line mode."""
         prompt = (
-            f"Synthesize speech for the following {target_language} dubbing line. "
-            f"Style: {emotion or 'natural'}, clear studio-quality narration, "
+            f"Synthesize speech for the following "
+            f"{target_language} dubbing line. "
+            f"Style: {emotion or 'natural'}, "
+            "clear studio-quality narration, "
             "natural conversational pace. "
             "Speak only the transcript after the TRANSCRIPT label. "
             "Do not read these instructions aloud. "
             "Do not add, remove, or paraphrase words.\n\n"
             f"TRANSCRIPT:\n{text.strip()}"
         )
+
         return self._synthesize_audio(
             prompt=prompt,
             speaker_voices={"Narrator": voice},
