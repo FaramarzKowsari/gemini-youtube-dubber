@@ -88,10 +88,7 @@ class GeminiDubClient:
         if not api_key:
             raise ValueError("GEMINI_API_KEY is missing")
 
-        self.client = genai.Client(
-            api_key=api_key,
-            http_options={"timeout": int(os.getenv("GEMINI_HTTP_TIMEOUT_MS", "120000"))},
-        )
+        self.client = genai.Client(api_key=api_key)
         self.transcribe_model = transcribe_model
         self.tts_model = tts_model
         self.tts_requests_per_minute = max(0, int(tts_requests_per_minute))
@@ -119,19 +116,6 @@ class GeminiDubClient:
             transcribe_fallback_models,
         )
 
-        self.transcribe_timeout_seconds = max(
-            30.0, float(os.getenv("GEMINI_TRANSCRIBE_TIMEOUT_SECONDS", "600"))
-        )
-        self.transcribe_poll_seconds = max(
-            2.0, float(os.getenv("GEMINI_TRANSCRIBE_POLL_SECONDS", "5"))
-        )
-        self.transcribe_max_retries = max(
-            0, int(os.getenv("GEMINI_TRANSCRIBE_MAX_RETRIES", str(self.transcribe_max_retries)))
-        )
-        self.tts_max_retries = max(
-            0, int(os.getenv("GEMINI_TTS_MAX_RETRIES", str(self.tts_max_retries)))
-        )
-
     @staticmethod
     def _prompt(target_language: str) -> str:
         return f"""
@@ -157,83 +141,6 @@ Requirements:
         if callback:
             callback(max(0.0, float(seconds)), message)
 
-    def _wait_for_background_interaction(
-        self,
-        interaction_id: str,
-        model: str,
-        *,
-        on_wait: WaitCallback | None = None,
-    ):
-        # Poll one server-side Gemini interaction without holding a long HTTP connection.
-        started = time.monotonic()
-        last_notice = -30.0
-        poll_failures = 0
-
-        while True:
-            elapsed = time.monotonic() - started
-            if elapsed >= self.transcribe_timeout_seconds:
-                try:
-                    self.client.interactions.cancel(id=interaction_id)
-                except Exception:
-                    pass
-                raise TimeoutError(
-                    f"Background Gemini analysis on {model} exceeded "
-                    f"{self.transcribe_timeout_seconds:.0f}s"
-                )
-
-            try:
-                interaction = self.client.interactions.get(id=interaction_id)
-                poll_failures = 0
-            except Exception as exc:
-                if not is_retryable_gemini_error(exc):
-                    raise
-                poll_failures += 1
-                delay = min(15.0, 2.0 + poll_failures * 2.0)
-                self._notify(
-                    on_wait,
-                    delay,
-                    f"Gemini analysis is still running server-side; "
-                    f"poll connection failed temporarily. Reconnecting in {delay:.0f}s",
-                )
-                time.sleep(delay)
-                continue
-
-            status = str(getattr(interaction, "status", "") or "").lower()
-
-            if status == "completed":
-                return interaction
-
-            if status == "in_progress":
-                if elapsed - last_notice >= 30.0:
-                    self._notify(
-                        on_wait,
-                        self.transcribe_poll_seconds,
-                        f"Gemini background analysis on {model}: "
-                        f"in progress · {elapsed:.0f}s elapsed",
-                    )
-                    last_notice = elapsed
-                time.sleep(self.transcribe_poll_seconds)
-                continue
-
-            if status == "failed":
-                error = getattr(interaction, "error", None)
-                raise RuntimeError(
-                    f"Gemini background analysis failed on {model}: "
-                    f"{error or 'server reported failed status'}"
-                )
-
-            if status == "cancelled":
-                raise RuntimeError(
-                    f"Gemini background analysis was cancelled on {model}"
-                )
-
-            if status == "requires_action":
-                raise RuntimeError(
-                    "Gemini background analysis unexpectedly requires client action"
-                )
-
-            time.sleep(self.transcribe_poll_seconds)
-
     def _transcribe_with_failover(
         self,
         *,
@@ -241,7 +148,12 @@ Requirements:
         target_language: str,
         on_wait: WaitCallback | None = None,
     ) -> Transcript:
-        # Reconnect-safe background video analysis with stable-model failover.
+        """Run multimodal transcription with retry + stable-model failover.
+
+        High-demand 500 errors switch models immediately instead of repeatedly
+        hammering the same overloaded endpoint. Other retryable 429/5xx errors
+        get a short exponential backoff first.
+        """
         last_error: BaseException | None = None
 
         for model_index, model in enumerate(self.transcribe_models):
@@ -252,68 +164,34 @@ Requirements:
                     self._notify(
                         on_wait,
                         0,
-                        f"Starting Gemini background video analysis with {model}",
+                        f"Gemini video analysis using {model}"
+                        + (
+                            f" · attempt {attempt + 1}/{self.transcribe_max_retries + 1}"
+                            if attempt > 0
+                            else ""
+                        ),
                     )
                     interaction = self.client.interactions.create(
                         model=model,
                         input=interaction_input,
                         response_format=_structured_json_format(),
-                        background=True,
-                    )
-                    interaction_id = str(interaction.id)
-                    self._notify(
-                        on_wait,
-                        0,
-                        f"Background interaction created: {interaction_id} · "
-                        "polling without a long-lived HTTP connection",
-                    )
-
-                    completed = self._wait_for_background_interaction(
-                        interaction_id,
-                        model,
-                        on_wait=on_wait,
                     )
                     return self._parse_transcript(
-                        completed.output_text,
+                        interaction.output_text,
                         target_language,
                     )
 
                 except Exception as exc:
                     last_error = exc
-                    lower = str(exc).lower()
-
-                    if isinstance(exc, TimeoutError) and has_fallback:
-                        next_model = self.transcribe_models[model_index + 1]
-                        self._notify(
-                            on_wait,
-                            0,
-                            f"{model} exceeded the analysis time limit; "
-                            f"switching to {next_model}",
-                        )
-                        break
-
-                    temporary_background_failure = any(
-                        signal in lower
-                        for signal in (
-                            "high demand",
-                            "temporarily unavailable",
-                            "server reported failed status",
-                        )
-                    )
+                    text = str(exc).lower()
 
                     if not is_retryable_gemini_error(exc):
-                        if temporary_background_failure and has_fallback:
-                            next_model = self.transcribe_models[model_index + 1]
-                            self._notify(
-                                on_wait,
-                                0,
-                                f"{model} background analysis failed temporarily; "
-                                f"switching to {next_model}",
-                            )
-                            break
                         raise
 
-                    if "high demand" in lower and has_fallback:
+                    # Google explicitly marks "high demand" as temporary capacity
+                    # pressure. In that case, fail over immediately to another stable
+                    # Flash model rather than waiting on the same saturated endpoint.
+                    if "high demand" in text and has_fallback:
                         next_model = self.transcribe_models[model_index + 1]
                         self._notify(
                             on_wait,
@@ -324,14 +202,15 @@ Requirements:
                         break
 
                     if attempt < self.transcribe_max_retries:
+                        fallback_delay = min(45.0, 6.0 * (2 ** attempt))
                         delay = retry_after_seconds(
                             exc,
-                            default=min(20.0, 4.0 * (2 ** attempt)),
+                            default=fallback_delay,
                         ) + 1.0
                         self._notify(
                             on_wait,
                             delay,
-                            f"Could not start/finish background analysis on {model}; "
+                            f"{model} returned a temporary Gemini error; "
                             f"retry {attempt + 1}/{self.transcribe_max_retries} "
                             f"in {delay:.1f}s",
                         )
@@ -343,9 +222,11 @@ Requirements:
                         self._notify(
                             on_wait,
                             0,
-                            f"{model} is unavailable; switching to {next_model}",
+                            f"{model} is still unavailable; switching to "
+                            f"fallback model {next_model}",
                         )
                         break
+
                     raise
 
         raise RuntimeError(
