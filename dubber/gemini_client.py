@@ -10,6 +10,7 @@ import wave
 from pathlib import Path
 
 from google import genai
+from google.genai import types
 
 from .models import Transcript
 from .rate_limit import (
@@ -49,16 +50,13 @@ TRANSCRIPT_SCHEMA = {
             },
         },
     },
-    "required": ["detected_language", "target_language", "title", "segments"],
+    "required": [
+        "detected_language",
+        "target_language",
+        "title",
+        "segments",
+    ],
 }
-
-
-def _structured_json_format() -> dict:
-    return {
-        "type": "text",
-        "mime_type": "application/json",
-        "schema": TRANSCRIPT_SCHEMA,
-    }
 
 
 def _unique_models(primary: str, fallbacks: list[str]) -> list[str]:
@@ -89,7 +87,7 @@ class GeminiDubClient:
 
         http_timeout_ms = max(
             10000,
-            int(os.getenv("GEMINI_HTTP_TIMEOUT_MS", "120000")),
+            int(os.getenv("GEMINI_HTTP_TIMEOUT_MS", "180000")),
         )
         self.client = genai.Client(
             api_key=api_key,
@@ -112,14 +110,6 @@ class GeminiDubClient:
                 )
             ),
         )
-        self.transcribe_timeout_seconds = max(
-            30.0,
-            float(os.getenv("GEMINI_TRANSCRIBE_TIMEOUT_SECONDS", "600")),
-        )
-        self.transcribe_poll_seconds = max(
-            2.0,
-            float(os.getenv("GEMINI_TRANSCRIBE_POLL_SECONDS", "5")),
-        )
 
         self._tts_pacer = RequestPacer(self.tts_requests_per_minute)
         self.tts_cache_enabled = bool(tts_cache_enabled)
@@ -132,10 +122,12 @@ class GeminiDubClient:
         if transcribe_fallback_models is None:
             env_fallbacks = os.getenv(
                 "GEMINI_TRANSCRIBE_FALLBACK_MODELS",
-                "gemini-3.6-flash,gemini-3.5-flash",
+                "gemini-3.5-flash,gemini-3.7-flash",
             )
             transcribe_fallback_models = [
-                item.strip() for item in env_fallbacks.split(",") if item.strip()
+                item.strip()
+                for item in env_fallbacks.split(",")
+                if item.strip()
             ]
 
         self.transcribe_models = _unique_models(
@@ -172,91 +164,38 @@ Requirements:
         if callback:
             callback(max(0.0, float(seconds)), message)
 
-    def _wait_for_background_interaction(
-        self,
-        interaction_id: str,
-        model: str,
-        *,
-        on_wait: WaitCallback | None = None,
-    ):
-        started = time.monotonic()
-        last_notice = -30.0
-        poll_failures = 0
-
-        while True:
-            elapsed = time.monotonic() - started
-            if elapsed >= self.transcribe_timeout_seconds:
-                try:
-                    self.client.interactions.cancel(id=interaction_id)
-                except Exception:
-                    pass
-                raise TimeoutError(
-                    f"Background Gemini analysis on {model} exceeded "
-                    f"{self.transcribe_timeout_seconds:.0f}s"
-                )
-
-            try:
-                interaction = self.client.interactions.get(interaction_id)
-                poll_failures = 0
-            except Exception as exc:
-                if not is_retryable_gemini_error(exc):
-                    raise
-
-                poll_failures += 1
-                delay = min(15.0, 2.0 + 2.0 * poll_failures)
-                self._notify(
-                    on_wait,
-                    delay,
-                    "Gemini analysis is still running server-side; "
-                    f"poll connection failed temporarily. Reconnecting in {delay:.0f}s",
-                )
-                time.sleep(delay)
-                continue
-
-            status = str(getattr(interaction, "status", "") or "").lower()
-
-            if status == "completed":
-                return interaction
-
-            if status == "in_progress":
-                if elapsed - last_notice >= 30.0:
-                    self._notify(
-                        on_wait,
-                        self.transcribe_poll_seconds,
-                        f"Gemini background analysis on {model}: "
-                        f"in progress · {elapsed:.0f}s elapsed",
-                    )
-                    last_notice = elapsed
-                time.sleep(self.transcribe_poll_seconds)
-                continue
-
-            if status == "failed":
-                error = getattr(interaction, "error", None)
-                raise RuntimeError(
-                    f"Gemini background analysis failed on {model}: "
-                    f"{error or 'server reported failed status'}"
-                )
-
-            if status == "cancelled":
-                raise RuntimeError(
-                    f"Gemini background analysis was cancelled on {model}"
-                )
-
-            if status == "requires_action":
-                raise RuntimeError(
-                    "Gemini background analysis unexpectedly requires client action"
-                )
-
-            time.sleep(self.transcribe_poll_seconds)
-
-    def _transcribe_with_failover(
+    def _generate_content_transcript(
         self,
         *,
-        interaction_input: list[dict],
+        youtube_url: str,
         target_language: str,
         on_wait: WaitCallback | None = None,
     ) -> Transcript:
+        """Use the fully-supported GenerateContent API for public YouTube input.
+
+        Interactions Background Execution is deliberately not used here because
+        some API-key projects can create a background interaction but receive a
+        403 when retrieving it. GenerateContent remains fully supported by Google.
+        """
         last_error: BaseException | None = None
+
+        contents = types.Content(
+            parts=[
+                types.Part(
+                    file_data=types.FileData(
+                        file_uri=youtube_url,
+                    )
+                ),
+                types.Part(
+                    text=self._prompt(target_language),
+                ),
+            ]
+        )
+
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_json_schema=TRANSCRIPT_SCHEMA,
+        )
 
         for model_index, model in enumerate(self.transcribe_models):
             has_fallback = model_index < len(self.transcribe_models) - 1
@@ -266,90 +205,64 @@ Requirements:
                     self._notify(
                         on_wait,
                         0,
-                        f"Starting Gemini background video analysis with {model}",
+                        f"Gemini GenerateContent video analysis using {model} "
+                        f"· attempt {attempt + 1}/{self.transcribe_max_retries + 1}",
                     )
 
-                    interaction = self.client.interactions.create(
+                    response = self.client.models.generate_content(
                         model=model,
-                        input=interaction_input,
-                        response_format=_structured_json_format(),
-                        background=True,
-                    )
-                    interaction_id = str(interaction.id)
-
-                    self._notify(
-                        on_wait,
-                        0,
-                        f"Background interaction created: {interaction_id} · "
-                        "polling without a long-lived HTTP connection",
+                        contents=contents,
+                        config=config,
                     )
 
-                    completed = self._wait_for_background_interaction(
-                        interaction_id,
-                        model,
-                        on_wait=on_wait,
-                    )
+                    text = (response.text or "").strip()
+                    if not text:
+                        raise RuntimeError(
+                            f"{model} returned an empty video-analysis response"
+                        )
+
                     return self._parse_transcript(
-                        completed.output_text,
+                        text,
                         target_language,
                     )
 
                 except Exception as exc:
                     last_error = exc
-                    text = str(exc).lower()
+                    lower = str(exc).lower()
 
-                    if isinstance(exc, TimeoutError) and has_fallback:
+                    # Model/project permission problems often differ between model
+                    # versions. Move to the next supported Flash model immediately.
+                    permission_problem = (
+                        "permission_denied" in lower
+                        or "permission denied" in lower
+                        or "error code: 403" in lower
+                    )
+                    high_demand = "high demand" in lower
+
+                    if (permission_problem or high_demand) and has_fallback:
                         next_model = self.transcribe_models[model_index + 1]
                         self._notify(
                             on_wait,
                             0,
-                            f"{model} exceeded the analysis time limit; "
+                            f"{model} unavailable for this request "
+                            f"({ 'permission' if permission_problem else 'high demand' }); "
                             f"switching to {next_model}",
                         )
                         break
 
-                    temporary_background_failure = any(
-                        signal in text
-                        for signal in (
-                            "high demand",
-                            "temporarily unavailable",
-                            "server reported failed status",
-                        )
-                    )
-
                     if not is_retryable_gemini_error(exc):
-                        if temporary_background_failure and has_fallback:
-                            next_model = self.transcribe_models[model_index + 1]
-                            self._notify(
-                                on_wait,
-                                0,
-                                f"{model} background analysis failed temporarily; "
-                                f"switching to {next_model}",
-                            )
-                            break
                         raise
-
-                    if "high demand" in text and has_fallback:
-                        next_model = self.transcribe_models[model_index + 1]
-                        self._notify(
-                            on_wait,
-                            0,
-                            f"{model} is under high demand; switching immediately "
-                            f"to fallback model {next_model}",
-                        )
-                        break
 
                     if attempt < self.transcribe_max_retries:
                         delay = retry_after_seconds(
                             exc,
-                            default=min(20.0, 4.0 * (2 ** attempt)),
+                            default=min(25.0, 5.0 * (2 ** attempt)),
                         ) + 1.0
                         self._notify(
                             on_wait,
                             delay,
-                            f"Could not start/finish background analysis on {model}; "
-                            f"retry {attempt + 1}/{self.transcribe_max_retries} "
-                            f"in {delay:.1f}s",
+                            f"Temporary Gemini/network error on {model}; "
+                            f"retrying in {delay:.1f}s",
                         )
                         time.sleep(delay)
                         continue
@@ -359,7 +272,7 @@ Requirements:
                         self._notify(
                             on_wait,
                             0,
-                            f"{model} is unavailable; switching to {next_model}",
+                            f"{model} still unavailable; switching to {next_model}",
                         )
                         break
 
@@ -378,11 +291,8 @@ Requirements:
         *,
         on_wait: WaitCallback | None = None,
     ) -> Transcript:
-        return self._transcribe_with_failover(
-            interaction_input=[
-                {"type": "video", "uri": youtube_url},
-                {"type": "text", "text": self._prompt(target_language)},
-            ],
+        return self._generate_content_transcript(
+            youtube_url=youtube_url,
             target_language=target_language,
             on_wait=on_wait,
         )
@@ -395,23 +305,71 @@ Requirements:
         on_wait: WaitCallback | None = None,
     ) -> Transcript:
         uploaded = self.client.files.upload(file=str(video_path))
+
         while not uploaded.state or uploaded.state.name != "ACTIVE":
             if uploaded.state and uploaded.state.name == "FAILED":
                 raise RuntimeError("Gemini failed to process the uploaded video")
             time.sleep(3)
             uploaded = self.client.files.get(name=uploaded.name)
 
-        return self._transcribe_with_failover(
-            interaction_input=[
-                {
-                    "type": "video",
-                    "uri": uploaded.uri,
-                    "mime_type": uploaded.mime_type or "video/mp4",
-                },
-                {"type": "text", "text": self._prompt(target_language)},
-            ],
-            target_language=target_language,
-            on_wait=on_wait,
+        last_error: BaseException | None = None
+        contents = [
+            uploaded,
+            self._prompt(target_language),
+        ]
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_json_schema=TRANSCRIPT_SCHEMA,
+        )
+
+        for model_index, model in enumerate(self.transcribe_models):
+            has_fallback = model_index < len(self.transcribe_models) - 1
+
+            for attempt in range(self.transcribe_max_retries + 1):
+                try:
+                    self._notify(
+                        on_wait,
+                        0,
+                        f"Gemini GenerateContent file analysis using {model}",
+                    )
+                    response = self.client.models.generate_content(
+                        model=model,
+                        contents=contents,
+                        config=config,
+                    )
+                    return self._parse_transcript(
+                        response.text or "",
+                        target_language,
+                    )
+                except Exception as exc:
+                    last_error = exc
+                    lower = str(exc).lower()
+
+                    if (
+                        ("permission_denied" in lower or "high demand" in lower)
+                        and has_fallback
+                    ):
+                        break
+
+                    if not is_retryable_gemini_error(exc):
+                        raise
+
+                    if attempt < self.transcribe_max_retries:
+                        delay = retry_after_seconds(exc, default=6.0) + 1.0
+                        self._notify(
+                            on_wait,
+                            delay,
+                            f"Temporary Gemini error; retrying in {delay:.1f}s",
+                        )
+                        time.sleep(delay)
+                    elif has_fallback:
+                        break
+                    else:
+                        raise
+
+        raise RuntimeError(
+            "Gemini file analysis failed on all configured models. "
+            f"Last error: {last_error}"
         )
 
     @staticmethod
@@ -430,7 +388,9 @@ Requirements:
             data.get("target_language") or target_language
         )
         transcript = Transcript.model_validate(data)
-        transcript.segments.sort(key=lambda s: (s.start, s.end))
+        transcript.segments.sort(
+            key=lambda segment: (segment.start, segment.end)
+        )
         return transcript
 
     def _tts_cache_path(
@@ -449,6 +409,7 @@ Requirements:
             ensure_ascii=False,
             sort_keys=True,
         ).encode("utf-8")
+
         digest = hashlib.sha256(payload).hexdigest()
         return self.cache_dir / f"{digest}.wav"
 
@@ -465,13 +426,18 @@ Requirements:
             raise ValueError(
                 "At least one Gemini TTS voice is required"
             )
+
         if len(speaker_voices) > 2:
             raise ValueError(
                 "Gemini multi-speaker TTS supports at most "
                 "two speakers per request"
             )
 
-        output_wav.parent.mkdir(parents=True, exist_ok=True)
+        output_wav.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
         cache_path = self._tts_cache_path(
             prompt,
             speaker_voices,
@@ -491,7 +457,10 @@ Requirements:
             speech_config = [{"voice": voice}]
         else:
             speech_config = [
-                {"speaker": speaker, "voice": voice}
+                {
+                    "speaker": speaker,
+                    "voice": voice,
+                }
                 for speaker, voice in speaker_voices.items()
             ]
 
@@ -506,9 +475,10 @@ Requirements:
                     input=prompt,
                     response_format={"type": "audio"},
                     generation_config={
-                        "speech_config": speech_config
+                        "speech_config": speech_config,
                     },
                 )
+
                 audio = interaction.output_audio
                 if not audio or not audio.data:
                     raise RuntimeError(
@@ -516,6 +486,7 @@ Requirements:
                     )
 
                 pcm = base64.b64decode(audio.data)
+
                 with wave.open(str(output_wav), "wb") as wf:
                     wf.setnchannels(1)
                     wf.setsampwidth(2)
@@ -528,7 +499,10 @@ Requirements:
                             parents=True,
                             exist_ok=True,
                         )
-                        shutil.copy2(output_wav, cache_path)
+                        shutil.copy2(
+                            output_wav,
+                            cache_path,
+                        )
                     except OSError:
                         pass
 
@@ -543,13 +517,12 @@ Requirements:
                 ):
                     raise
 
-                fallback = min(
-                    30.0,
-                    3.0 * (2 ** attempt),
-                )
                 delay = retry_after_seconds(
                     exc,
-                    default=fallback,
+                    default=min(
+                        30.0,
+                        3.0 * (2 ** attempt),
+                    ),
                 ) + 1.0
 
                 self._tts_pacer.cooldown(
@@ -596,8 +569,7 @@ Requirements:
         prompt = (
             f"Synthesize speech for the following "
             f"{target_language} dubbing line. "
-            f"Style: {emotion or 'natural'}, "
-            "clear studio-quality narration, "
+            f"Style: {emotion or 'natural'}, clear studio-quality narration, "
             "natural conversational pace. "
             "Speak only the transcript after the TRANSCRIPT label. "
             "Do not read these instructions aloud. "

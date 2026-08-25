@@ -36,6 +36,11 @@ on:
         default: '0'
         type: string
 
+  # Temporary self-test trigger. It runs only when the pushed commit message
+  # contains [cloud-test], so ordinary pushes do not consume Gemini quota.
+  push:
+    branches: [main]
+
 permissions:
   contents: read
 
@@ -45,20 +50,34 @@ concurrency:
 
 jobs:
   dub:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[cloud-test]')
     name: Generate dub audio on GitHub runner
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_DUBBER_CACHE_DIR: .tts-cache
-      GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-3.6-flash,gemini-3.5-flash
-      GEMINI_TRANSCRIBE_TIMEOUT_SECONDS: '240'
-      GEMINI_TRANSCRIBE_POLL_SECONDS: '5'
-      GEMINI_HTTP_TIMEOUT_MS: '120000'
+
+      # GenerateContent is more compatible with API-key projects for this
+      # YouTube workload than background Interaction retrieval.
+      GEMINI_TRANSCRIBE_MODEL: gemini-3.6-flash
+      GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-3.5-flash,gemini-3.7-flash
+      GEMINI_HTTP_TIMEOUT_MS: '180000'
       GEMINI_TRANSCRIBE_MAX_RETRIES: '1'
       GEMINI_TTS_MAX_RETRIES: '4'
       GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
+
+      # workflow_dispatch values; for our one-time [cloud-test] push these
+      # fall back to the same short test video already used in previous runs.
+      YOUTUBE_URL: ${{ inputs.youtube_url || 'https://www.youtube.com/watch?v=B_-Y95shNyA' }}
+      TARGET_LANGUAGE: ${{ inputs.target_language || 'Persian (فارسی)' }}
+      PRIMARY_VOICE: ${{ inputs.primary_voice || 'Kore' }}
+      SECONDARY_VOICE: ${{ inputs.secondary_voice || 'Same' }}
+      CHUNK_SECONDS: ${{ inputs.chunk_seconds || '60' }}
+      ORIGINAL_AUDIO_PERCENT: ${{ inputs.original_audio_percent || '0' }}
 
     steps:
       - name: Checkout
@@ -81,6 +100,13 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile \
+            dubber/gemini_client.py \
+            dubber/cloud_pipeline.py \
+            cloud_cli.py
+
       - name: Restore reusable TTS cache
         uses: actions/cache@v5
         with:
@@ -91,13 +117,6 @@ jobs:
 
       - name: Generate Smart Chunk dubbing package
         shell: bash
-        env:
-          YOUTUBE_URL: ${{ inputs.youtube_url }}
-          TARGET_LANGUAGE: ${{ inputs.target_language }}
-          PRIMARY_VOICE: ${{ inputs.primary_voice }}
-          SECONDARY_VOICE: ${{ inputs.secondary_voice }}
-          CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
-          ORIGINAL_AUDIO_PERCENT: ${{ inputs.original_audio_percent }}
         run: |
           set +e
 
@@ -110,9 +129,9 @@ jobs:
 
           for ATTEMPT in 1 2; do
             echo "============================================================"
-            echo "Cloud Dub process attempt ${ATTEMPT}/2"
-            echo "Gemini Background Execution: enabled"
-            echo "Analysis timeout: 240s per model"
+            echo "Cloud Dub v0.2.5 process attempt ${ATTEMPT}/2"
+            echo "Video analysis API: GenerateContent"
+            echo "Primary analysis model: $GEMINI_TRANSCRIBE_MODEL"
             echo "Transcript checkpoint reuse: enabled"
             echo "============================================================"
 
@@ -134,8 +153,8 @@ jobs:
             fi
 
             if [ "$ATTEMPT" -lt 2 ]; then
-              echo "::warning::Process failed with code ${LAST_STATUS}; retrying in 20s. If transcript.json exists, video analysis will be skipped."
-              sleep 20
+              echo "::warning::Process failed with code ${LAST_STATUS}; retrying in 15s. If transcript.json exists, analysis will be skipped."
+              sleep 15
             fi
           done
 
@@ -167,7 +186,6 @@ jobs:
           {
             echo "## Cloud dub package is ready"
             echo ""
-            echo "1. Download the cloud-dub-package artifact."
-            echo "2. Double-click FINALIZE_CLOUD_DUB_WINDOWS.bat on Windows."
-            echo "3. Select the downloaded artifact ZIP."
+            echo "Download the cloud-dub-package artifact."
+            echo "Then run FINALIZE_CLOUD_DUB_WINDOWS.bat on Windows."
           } >> "$GITHUB_STEP_SUMMARY"
