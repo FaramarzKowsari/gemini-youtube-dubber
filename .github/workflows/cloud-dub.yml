@@ -67,6 +67,9 @@ jobs:
       GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-3.5-flash,gemini-3.7-flash
       GEMINI_HTTP_TIMEOUT_MS: '180000'
       GEMINI_TRANSCRIBE_MAX_RETRIES: '1'
+      GEMINI_TTS_MODEL: gemini-3.1-flash-tts-preview
+      GEMINI_TTS_FALLBACK_MODELS: gemini-2.5-flash-preview-tts
+      GEMINI_TTS_REQUEST_BUDGET: '8'
       GEMINI_TTS_MAX_RETRIES: '4'
       GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
 
@@ -114,6 +117,7 @@ jobs:
           key: gemini-tts-${{ github.repository_id }}-${{ github.run_id }}
           restore-keys: |
             gemini-tts-${{ github.repository_id }}-
+          save-always: true
 
       - name: Generate Smart Chunk dubbing package
         shell: bash
@@ -129,10 +133,12 @@ jobs:
 
           for ATTEMPT in 1 2; do
             echo "============================================================"
-            echo "Cloud Dub v0.2.5 process attempt ${ATTEMPT}/2"
+            echo "Cloud Dub v0.2.6 process attempt ${ATTEMPT}/2"
             echo "Video analysis API: GenerateContent"
             echo "Primary analysis model: $GEMINI_TRANSCRIBE_MODEL"
             echo "Transcript checkpoint reuse: enabled"
+            echo "Free-tier TTS request budget: $GEMINI_TTS_REQUEST_BUDGET"
+            echo "TTS fallback: $GEMINI_TTS_MODEL -> $GEMINI_TTS_FALLBACK_MODELS"
             echo "============================================================"
 
             python cloud_cli.py \

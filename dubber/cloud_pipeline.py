@@ -111,7 +111,7 @@ def run_cloud_audio_dubbing(
         _progress(
             progress,
             0.05,
-            "Starting reconnect-safe Gemini background video analysis",
+            "Starting Gemini GenerateContent video analysis",
         )
 
         def _on_transcribe_wait(seconds: float, message: str) -> None:
@@ -179,6 +179,35 @@ def run_cloud_audio_dubbing(
             max_gap_seconds=smart_chunk_max_gap,
         )
         engine_label = "Smart Chunk"
+
+        # Gemini TTS preview models can have very small free-tier request quotas.
+        # Adapt chunk duration upward until the job fits a safe request budget.
+        request_budget = max(
+            1,
+            int(os.getenv("GEMINI_TTS_REQUEST_BUDGET", "8")),
+        )
+        original_request_count = len(chunks)
+        adaptive_seconds = max(float(smart_chunk_seconds), 60.0)
+
+        while len(chunks) > request_budget and adaptive_seconds < 180.0:
+            adaptive_seconds = min(180.0, adaptive_seconds + 15.0)
+            candidate = build_smart_chunks(
+                transcript.segments,
+                speaker_roles,
+                max_chunk_seconds=adaptive_seconds,
+                max_gap_seconds=smart_chunk_max_gap,
+            )
+            if len(candidate) <= len(chunks):
+                chunks = candidate
+
+        if len(chunks) < original_request_count:
+            _progress(
+                progress,
+                0.17,
+                f"Free-tier TTS optimizer: {original_request_count} -> "
+                f"{len(chunks)} requests using up to "
+                f"{adaptive_seconds:.0f}s smart chunks",
+            )
     else:
         chunks = build_precise_chunks(
             transcript.segments,
@@ -191,7 +220,8 @@ def run_cloud_audio_dubbing(
         0.18,
         f"{engine_label}: "
         f"{len(transcript.segments)} dialogue segments -> "
-        f"{len(chunks)} Gemini TTS requests",
+        f"{len(chunks)} Gemini TTS requests · "
+        f"TTS models: {', '.join(gemini.tts_models)}",
     )
 
     chunk_audio: list[tuple[float, Path]] = []
@@ -262,7 +292,7 @@ def run_cloud_audio_dubbing(
 
     manifest_data = {
         "format_version": 2,
-        "mode": "hybrid-cloud-background-checkpoint",
+        "mode": "hybrid-cloud-generatecontent-free-tier-safe",
         "youtube_url": youtube_url.strip(),
         "target_language": target_language,
         "primary_voice": primary_voice,
@@ -275,6 +305,8 @@ def run_cloud_audio_dubbing(
         "source_segments": len(transcript.segments),
         "tts_requests": len(chunks),
         "transcribe_models": gemini.transcribe_models,
+        "tts_models": gemini.tts_models,
+        "tts_request_budget": int(os.getenv("GEMINI_TTS_REQUEST_BUDGET", "8")),
         "instructions": (
             "Download this artifact, then run "
             "FINALIZE_CLOUD_DUB_WINDOWS.bat on Windows "

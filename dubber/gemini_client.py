@@ -96,6 +96,20 @@ class GeminiDubClient:
 
         self.transcribe_model = transcribe_model
         self.tts_model = tts_model
+
+        env_tts_fallbacks = os.getenv(
+            "GEMINI_TTS_FALLBACK_MODELS",
+            "gemini-2.5-flash-preview-tts",
+        )
+        self.tts_models = _unique_models(
+            self.tts_model,
+            [
+                item.strip()
+                for item in env_tts_fallbacks.split(",")
+                if item.strip()
+            ],
+        )
+
         self.tts_requests_per_minute = max(0, int(tts_requests_per_minute))
         self.tts_max_retries = max(
             0,
@@ -398,10 +412,11 @@ Requirements:
         prompt: str,
         speaker_voices: dict[str, str],
         target_language: str,
+        model: str,
     ) -> Path:
         payload = json.dumps(
             {
-                "model": self.tts_model,
+                "model": model,
                 "speakers": speaker_voices,
                 "language": target_language,
                 "prompt": prompt.strip(),
@@ -413,6 +428,36 @@ Requirements:
         digest = hashlib.sha256(payload).hexdigest()
         return self.cache_dir / f"{digest}.wav"
 
+    @staticmethod
+    def _speech_config(
+        speaker_voices: dict[str, str],
+    ) -> types.SpeechConfig:
+        if len(speaker_voices) == 1:
+            voice = next(iter(speaker_voices.values()))
+            return types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=voice,
+                    )
+                )
+            )
+
+        return types.SpeechConfig(
+            multi_speaker_voice_config=types.MultiSpeakerVoiceConfig(
+                speaker_voice_configs=[
+                    types.SpeakerVoiceConfig(
+                        speaker=speaker,
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice,
+                            )
+                        ),
+                    )
+                    for speaker, voice in speaker_voices.items()
+                ]
+            )
+        )
+
     def _synthesize_audio(
         self,
         *,
@@ -423,120 +468,158 @@ Requirements:
         on_wait: WaitCallback | None = None,
     ) -> Path:
         if not speaker_voices:
-            raise ValueError(
-                "At least one Gemini TTS voice is required"
-            )
+            raise ValueError("At least one Gemini TTS voice is required")
 
         if len(speaker_voices) > 2:
             raise ValueError(
-                "Gemini multi-speaker TTS supports at most "
-                "two speakers per request"
+                "Gemini multi-speaker TTS supports at most two speakers per request"
             )
 
-        output_wav.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        output_wav.parent.mkdir(parents=True, exist_ok=True)
 
-        cache_path = self._tts_cache_path(
-            prompt,
-            speaker_voices,
-            target_language,
-        )
+        # Reuse a cached result created by any configured TTS model.
+        if self.tts_cache_enabled:
+            for model in self.tts_models:
+                cached = self._tts_cache_path(
+                    prompt,
+                    speaker_voices,
+                    target_language,
+                    model,
+                )
+                if cached.exists() and cached.stat().st_size > 44:
+                    shutil.copy2(cached, output_wav)
+                    return output_wav
 
-        if (
-            self.tts_cache_enabled
-            and cache_path.exists()
-            and cache_path.stat().st_size > 44
-        ):
-            shutil.copy2(cache_path, output_wav)
-            return output_wav
-
-        if len(speaker_voices) == 1:
-            voice = next(iter(speaker_voices.values()))
-            speech_config = [{"voice": voice}]
-        else:
-            speech_config = [
-                {
-                    "speaker": speaker,
-                    "voice": voice,
-                }
-                for speaker, voice in speaker_voices.items()
-            ]
-
+        speech_config = self._speech_config(speaker_voices)
         last_error: BaseException | None = None
 
-        for attempt in range(self.tts_max_retries + 1):
-            self._tts_pacer.wait_for_slot(on_wait)
+        for model_index, model in enumerate(self.tts_models):
+            has_fallback = model_index < len(self.tts_models) - 1
 
-            try:
-                interaction = self.client.interactions.create(
-                    model=self.tts_model,
-                    input=prompt,
-                    response_format={"type": "audio"},
-                    generation_config={
-                        "speech_config": speech_config,
-                    },
-                )
+            for attempt in range(self.tts_max_retries + 1):
+                self._tts_pacer.wait_for_slot(on_wait)
 
-                audio = interaction.output_audio
-                if not audio or not audio.data:
-                    raise RuntimeError(
-                        "Gemini TTS returned no audio"
+                try:
+                    self._notify(
+                        on_wait,
+                        0,
+                        f"Gemini TTS using {model}",
                     )
 
-                pcm = base64.b64decode(audio.data)
+                    response = self.client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_modalities=["AUDIO"],
+                            speech_config=speech_config,
+                        ),
+                    )
 
-                with wave.open(str(output_wav), "wb") as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(24000)
-                    wf.writeframes(pcm)
-
-                if self.tts_cache_enabled:
                     try:
-                        self.cache_dir.mkdir(
-                            parents=True,
-                            exist_ok=True,
+                        data = (
+                            response.candidates[0]
+                            .content.parts[0]
+                            .inline_data.data
                         )
-                        shutil.copy2(
-                            output_wav,
-                            cache_path,
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"{model} returned no audio payload"
+                        ) from exc
+
+                    if not data:
+                        raise RuntimeError(
+                            f"{model} returned an empty audio payload"
                         )
-                    except OSError:
-                        pass
 
-                return output_wav
+                    if isinstance(data, str):
+                        pcm = base64.b64decode(data)
+                    else:
+                        pcm = bytes(data)
 
-            except Exception as exc:
-                last_error = exc
+                    with wave.open(str(output_wav), "wb") as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2)
+                        wf.setframerate(24000)
+                        wf.writeframes(pcm)
 
-                if (
-                    not is_retryable_gemini_error(exc)
-                    or attempt >= self.tts_max_retries
-                ):
+                    if self.tts_cache_enabled:
+                        try:
+                            cache_path = self._tts_cache_path(
+                                prompt,
+                                speaker_voices,
+                                target_language,
+                                model,
+                            )
+                            self.cache_dir.mkdir(
+                                parents=True,
+                                exist_ok=True,
+                            )
+                            shutil.copy2(output_wav, cache_path)
+                        except OSError:
+                            pass
+
+                    return output_wav
+
+                except Exception as exc:
+                    last_error = exc
+                    lower = str(exc).lower()
+
+                    quota_or_permission = (
+                        "quota exceeded" in lower
+                        or "too_many_requests" in lower
+                        or "resource_exhausted" in lower
+                        or "error code: 429" in lower
+                        or "permission_denied" in lower
+                        or "error code: 403" in lower
+                    )
+
+                    # Free-tier quota on one TTS model must not kill the dub.
+                    # Move immediately to the next officially supported free TTS model.
+                    if quota_or_permission and has_fallback:
+                        next_model = self.tts_models[model_index + 1]
+                        self._notify(
+                            on_wait,
+                            0,
+                            f"{model} quota/access limit reached; "
+                            f"switching TTS to {next_model}",
+                        )
+                        break
+
+                    if not is_retryable_gemini_error(exc):
+                        raise
+
+                    if attempt < self.tts_max_retries:
+                        delay = retry_after_seconds(
+                            exc,
+                            default=min(30.0, 3.0 * (2 ** attempt)),
+                        ) + 1.0
+                        self._tts_pacer.cooldown(
+                            delay,
+                            on_wait,
+                            message=(
+                                f"{model} temporary TTS error; "
+                                f"retry {attempt + 1}/{self.tts_max_retries} "
+                                f"in {delay:.1f}s"
+                            ),
+                        )
+                        continue
+
+                    if has_fallback:
+                        next_model = self.tts_models[model_index + 1]
+                        self._notify(
+                            on_wait,
+                            0,
+                            f"{model} still unavailable; "
+                            f"switching TTS to {next_model}",
+                        )
+                        break
+
                     raise
 
-                delay = retry_after_seconds(
-                    exc,
-                    default=min(
-                        30.0,
-                        3.0 * (2 ** attempt),
-                    ),
-                ) + 1.0
-
-                self._tts_pacer.cooldown(
-                    delay,
-                    on_wait,
-                    message=(
-                        "Gemini TTS temporary error; "
-                        f"retry {attempt + 1}/{self.tts_max_retries} "
-                        f"in {delay:.1f}s"
-                    ),
-                )
-
         raise RuntimeError(
-            f"Gemini TTS failed after retries: {last_error}"
+            "Gemini TTS failed on all configured models: "
+            + ", ".join(self.tts_models)
+            + (f". Last error: {last_error}" if last_error else "")
         )
 
     def synthesize_chunk(
