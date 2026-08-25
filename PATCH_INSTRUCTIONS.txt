@@ -1,45 +1,20 @@
-Gemini YouTube Dubber v0.2.2 Resilience Patch
+v0.2.3 Network Resilience Patch
 
-WHY THIS PATCH EXISTS
-The GitHub Cloud Dub run reached Gemini successfully, but Gemini returned:
-  Error code: 500
-  gemini-3.7-flash is currently experiencing high demand
+Fixes:
+APIConnectionError: [Errno 104] Connection reset by peer
 
-The older code retried transient errors for TTS, but NOT for video transcription/translation.
-This patch fixes that.
+Copy all files into:
+C:\Faramarz\GitHub\gemini-youtube-dubber-github
 
-WHAT CHANGES
-1. Video analysis now retries transient 429/500/502/503/504 errors.
-2. "high demand" switches immediately:
-     gemini-3.7-flash -> gemini-3.6-flash -> gemini-3.5-flash
-3. Cloud logs show which model is active and when failover happens.
-4. actions/cache is upgraded v4 -> v5 to remove the Node.js 20 warning.
-5. App package version becomes 0.2.2.
+Choose Replace.
 
-INSTALL
-Extract this ZIP directly into:
-  C:\Faramarz\GitHub\gemini-youtube-dubber-github
-
-Choose "Replace the file in the destination" when Windows asks.
-
-Then GitHub Desktop should show changed files.
-
-Summary:
-  Add Gemini transcription retry and model failover (v0.2.2)
+GitHub Desktop Summary:
+Handle Gemini network resets and retry Cloud Dub (v0.2.3)
 
 Then:
-  Commit to main
-  Push origin
+Commit to main
+Push origin
 
-After Push:
-  GitHub -> Actions -> Cloud Dub -> Run workflow
-
-Use the same test inputs.
-
-EXPECTED LOG IF 3.7 IS BUSY
-  Gemini video analysis using gemini-3.7-flash
-  gemini-3.7-flash is under high demand; switching immediately to fallback model gemini-3.6-flash
-  Gemini video analysis using gemini-3.6-flash
-
-Do not click "Re-run jobs" on the OLD failed run before pushing this patch,
-because re-running the old commit will still use the old code.
+IMPORTANT:
+Do not click Re-run jobs on the old Cloud Dub #3.
+After Push, create a brand-new Actions -> Cloud Dub -> Run workflow.

@@ -5,18 +5,45 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-
 WaitCallback = Callable[[float, str], None]
-
 
 _RETRY_PATTERNS = (
     re.compile(r"retry\s+in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE),
     re.compile(r"retryDelay['\"\s:]+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE),
 )
 
+_TRANSIENT_ERRNOS = {54, 60, 104, 110, 10053, 10054, 10060}
+
+_NETWORK_SIGNALS = (
+    "apiconnectionerror",
+    "api connection error",
+    "connection reset by peer",
+    "connection reset",
+    "connection aborted",
+    "connection closed",
+    "connection error",
+    "server disconnected",
+    "server disconnect",
+    "remoteprotocolerror",
+    "readtimeout",
+    "connecttimeout",
+    "timeout error",
+    "timed out",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "network is unreachable",
+    "broken pipe",
+    "sslerror",
+    "errno 104",
+    "errno 54",
+    "errno 110",
+    "errno 10053",
+    "errno 10054",
+    "errno 10060",
+)
+
 
 def retry_after_seconds(exc: BaseException, default: float = 8.0) -> float:
-    """Extract Gemini's suggested retry delay from a 429/5xx exception string."""
     text = str(exc)
     for pattern in _RETRY_PATTERNS:
         match = pattern.search(text)
@@ -25,43 +52,61 @@ def retry_after_seconds(exc: BaseException, default: float = 8.0) -> float:
     return max(0.0, float(default))
 
 
-def is_retryable_gemini_error(exc: BaseException) -> bool:
-    """Return True for rate-limit and transient server failures worth retrying."""
-    code = getattr(exc, "status_code", None)
-    if code is None:
-        code = getattr(exc, "code", None)
-    try:
-        if int(code) in {429, 500, 502, 503, 504}:
-            return True
-    except (TypeError, ValueError):
-        pass
+def _exception_chain(exc: BaseException):
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
 
-    text = str(exc).lower()
-    signals = (
-        "error code: 429",
-        "resource_exhausted",
-        "too_many_requests",
-        "rate limit",
-        "quota exceeded",
-        "error code: 500",
-        "error code: 502",
-        "error code: 503",
-        "error code: 504",
-        "internal server error",
-        "service unavailable",
-    )
-    return any(signal in text for signal in signals)
+
+def is_retryable_gemini_error(exc: BaseException) -> bool:
+    """Transient Gemini/API/network failures that should be retried."""
+    for item in _exception_chain(exc):
+        code = getattr(item, "status_code", None)
+        if code is None:
+            code = getattr(item, "code", None)
+        try:
+            if int(code) in {408, 425, 429, 500, 502, 503, 504}:
+                return True
+        except (TypeError, ValueError):
+            pass
+
+        errno_value = getattr(item, "errno", None)
+        try:
+            if int(errno_value) in _TRANSIENT_ERRNOS:
+                return True
+        except (TypeError, ValueError):
+            pass
+
+        if isinstance(item, (ConnectionError, TimeoutError)):
+            return True
+
+        text = f"{type(item).__name__}: {item}".lower()
+        signals = (
+            "error code: 408",
+            "error code: 425",
+            "error code: 429",
+            "resource_exhausted",
+            "too_many_requests",
+            "rate limit",
+            "quota exceeded",
+            "error code: 500",
+            "error code: 502",
+            "error code: 503",
+            "error code: 504",
+            "internal server error",
+            "service unavailable",
+            *_NETWORK_SIGNALS,
+        )
+        if any(signal in text for signal in signals):
+            return True
+    return False
 
 
 @dataclass
 class RequestPacer:
-    """Simple request pacer for RPM quotas.
-
-    Requests are spread evenly instead of sent in a burst. For example, 3 RPM
-    means roughly one request every 20.5 seconds. A small safety margin protects
-    rolling-window quotas.
-    """
-
     requests_per_minute: int = 3
     safety_margin_seconds: float = 0.75
     clock: Callable[[], float] = time.monotonic
