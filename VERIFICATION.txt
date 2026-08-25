@@ -1,0 +1,1 @@
+Verified against Cloud Dub #6 checkpoint: 14 -> 8 TTS requests at 105s adaptive chunks.
