@@ -108,7 +108,7 @@ jobs:
             cloud_cli.py
 
       - name: Restore reusable TTS cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .tts-cache
           key: gemini-tts-${{ github.repository_id }}-${{ github.run_id }}
