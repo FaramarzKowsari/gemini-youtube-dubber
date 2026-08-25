@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.2 - 2026-08-25
+
+- Added automatic retry/backoff to Gemini video transcription/translation, not only TTS.
+- Added immediate failover when Gemini reports a model is under `high demand`.
+- Added stable multimodal fallback chain: `gemini-3.7-flash` -> `gemini-3.6-flash` -> `gemini-3.5-flash`.
+- Added `GEMINI_TRANSCRIBE_FALLBACK_MODELS` environment override.
+- Added visible Cloud Dub progress messages for retries and model failover.
+- Upgraded `actions/cache` from v4 to v5 (Node.js 24) to remove the GitHub Actions Node.js 20 deprecation warning.
+- Retained Hybrid Cloud mode: GitHub generates dub audio/SRT/JSON without downloading YouTube; Windows performs the final local video download + mux.
+
+## 0.2.1 - 2026-08-25
+
+- Added Hybrid Cloud mode to avoid YouTube bot protection on GitHub-hosted runner IPs.
+- GitHub now sends the public YouTube URL directly to Gemini and generates the dubbing audio package without downloading the source video.
+- Added `FINALIZE_CLOUD_DUB_WINDOWS.bat` and `finalize_cloud_dub.py` for the fast local finalization step.
+- Final MP4 source-video download and FFmpeg mux now happen locally, where YouTube access is substantially more reliable.
+
 ## 0.2.0 - 2026-08-25
 
 - Added Smart Chunk TTS, combining nearby transcript segments into 45-60 second dubbing blocks instead of one Gemini request per line.
@@ -8,7 +25,7 @@
 - Added Fast (60s), Balanced (45s), and Precise per-segment modes to the Streamlit UI; Fast is the new default.
 - Added request-reduction reporting, e.g. `36 dialogue segments -> 4 Gemini TTS requests`.
 - Added `cli.py` for non-interactive batch and CI processing.
-- Added `.github/workflows/cloud-dub.yml` so YouTube dubbing can run on a GitHub-hosted runner via `workflow_dispatch` and return MP4/SRT/JSON as an Actions artifact.
+- Added `.github/workflows/cloud-dub.yml` so dubbing can run on a GitHub-hosted runner via `workflow_dispatch`.
 - Added cross-run TTS cache restoration in GitHub Actions.
 - Added `SETUP_GITHUB_CLOUD.bat` to store a fresh Gemini key as the encrypted `GEMINI_API_KEY` Actions secret and open the Cloud Dub workflow.
 - Added Smart Chunk, multi-speaker, and Cloud workflow regression tests.

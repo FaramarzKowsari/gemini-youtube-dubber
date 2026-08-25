@@ -1,31 +1,45 @@
-Gemini YouTube Dubber v0.2.1 Hybrid Cloud Patch
+Gemini YouTube Dubber v0.2.2 Resilience Patch
 
-Files in this patch:
-- dubber/cloud_pipeline.py       NEW
-- cloud_cli.py                   NEW
-- finalize_cloud_dub.py          NEW
-- FINALIZE_CLOUD_DUB_WINDOWS.bat NEW
-- .github/workflows/cloud-dub.yml REPLACE
+WHY THIS PATCH EXISTS
+The GitHub Cloud Dub run reached Gemini successfully, but Gemini returned:
+  Error code: 500
+  gemini-3.7-flash is currently experiencing high demand
 
-WHY:
-GitHub-hosted runners are often blocked by YouTube with:
-"Sign in to confirm you're not a bot".
+The older code retried transient errors for TTS, but NOT for video transcription/translation.
+This patch fixes that.
 
-NEW FLOW:
-1) GitHub Actions sends the public YouTube URL directly to Gemini.
-2) GitHub generates translated dub audio, SRT and transcript.
-3) Download the resulting cloud-dub-package ZIP artifact.
-4) On Windows run FINALIZE_CLOUD_DUB_WINDOWS.bat.
-5) The source video is downloaded locally and merged with the cloud-generated dub.
+WHAT CHANGES
+1. Video analysis now retries transient 429/500/502/503/504 errors.
+2. "high demand" switches immediately:
+     gemini-3.7-flash -> gemini-3.6-flash -> gemini-3.5-flash
+3. Cloud logs show which model is active and when failover happens.
+4. actions/cache is upgraded v4 -> v5 to remove the Node.js 20 warning.
+5. App package version becomes 0.2.2.
 
-INSTALL:
-Extract this ZIP directly into your cloned repository root:
-C:\Faramarz\GitHub\gemini-youtube-dubber-github
+INSTALL
+Extract this ZIP directly into:
+  C:\Faramarz\GitHub\gemini-youtube-dubber-github
 
-Choose Replace when Windows asks about:
-.github\workflows\cloud-dub.yml
+Choose "Replace the file in the destination" when Windows asks.
 
-Then GitHub Desktop:
-Summary: Fix Cloud Dub for YouTube bot protection (v0.2.1)
-Commit to main
-Push origin
+Then GitHub Desktop should show changed files.
+
+Summary:
+  Add Gemini transcription retry and model failover (v0.2.2)
+
+Then:
+  Commit to main
+  Push origin
+
+After Push:
+  GitHub -> Actions -> Cloud Dub -> Run workflow
+
+Use the same test inputs.
+
+EXPECTED LOG IF 3.7 IS BUSY
+  Gemini video analysis using gemini-3.7-flash
+  gemini-3.7-flash is under high demand; switching immediately to fallback model gemini-3.6-flash
+  Gemini video analysis using gemini-3.6-flash
+
+Do not click "Re-run jobs" on the OLD failed run before pushing this patch,
+because re-running the old commit will still use the old code.

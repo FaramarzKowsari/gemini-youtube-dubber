@@ -12,7 +12,12 @@ from pathlib import Path
 from google import genai
 
 from .models import Transcript
-from .rate_limit import RequestPacer, WaitCallback, is_retryable_gemini_error, retry_after_seconds
+from .rate_limit import (
+    RequestPacer,
+    WaitCallback,
+    is_retryable_gemini_error,
+    retry_after_seconds,
+)
 
 
 TRANSCRIPT_SCHEMA = {
@@ -34,7 +39,12 @@ TRANSCRIPT_SCHEMA = {
                     "emotion": {"type": "string"},
                 },
                 "required": [
-                    "start", "end", "speaker", "source_text", "target_text", "emotion"
+                    "start",
+                    "end",
+                    "speaker",
+                    "source_text",
+                    "target_text",
+                    "emotion",
                 ],
             },
         },
@@ -52,6 +62,15 @@ def _structured_json_format() -> dict:
     }
 
 
+def _unique_models(primary: str, fallbacks: list[str]) -> list[str]:
+    models: list[str] = []
+    for model in [primary, *fallbacks]:
+        model = (model or "").strip()
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
 class GeminiDubClient:
     def __init__(
         self,
@@ -63,18 +82,39 @@ class GeminiDubClient:
         tts_cache_enabled: bool = True,
         cache_dir: Path | None = None,
         tts_max_retries: int = 8,
+        transcribe_max_retries: int = 2,
+        transcribe_fallback_models: list[str] | None = None,
     ):
         if not api_key:
             raise ValueError("GEMINI_API_KEY is missing")
+
         self.client = genai.Client(api_key=api_key)
         self.transcribe_model = transcribe_model
         self.tts_model = tts_model
         self.tts_requests_per_minute = max(0, int(tts_requests_per_minute))
         self.tts_max_retries = max(0, int(tts_max_retries))
+        self.transcribe_max_retries = max(0, int(transcribe_max_retries))
         self._tts_pacer = RequestPacer(self.tts_requests_per_minute)
         self.tts_cache_enabled = bool(tts_cache_enabled)
+
         default_cache = Path.home() / ".gemini-youtube-dubber-cache" / "tts"
-        self.cache_dir = Path(cache_dir or os.getenv("GEMINI_DUBBER_CACHE_DIR", default_cache))
+        self.cache_dir = Path(
+            cache_dir or os.getenv("GEMINI_DUBBER_CACHE_DIR", default_cache)
+        )
+
+        if transcribe_fallback_models is None:
+            env_fallbacks = os.getenv(
+                "GEMINI_TRANSCRIBE_FALLBACK_MODELS",
+                "gemini-3.6-flash,gemini-3.5-flash",
+            )
+            transcribe_fallback_models = [
+                item.strip() for item in env_fallbacks.split(",") if item.strip()
+            ]
+
+        self.transcribe_models = _unique_models(
+            self.transcribe_model,
+            transcribe_fallback_models,
+        )
 
     @staticmethod
     def _prompt(target_language: str) -> str:
@@ -96,18 +136,128 @@ Requirements:
 - Do not create segments for music-only or silence.
 """.strip()
 
-    def transcribe_youtube(self, youtube_url: str, target_language: str) -> Transcript:
-        interaction = self.client.interactions.create(
-            model=self.transcribe_model,
-            input=[
+    @staticmethod
+    def _notify(callback: WaitCallback | None, seconds: float, message: str) -> None:
+        if callback:
+            callback(max(0.0, float(seconds)), message)
+
+    def _transcribe_with_failover(
+        self,
+        *,
+        interaction_input: list[dict],
+        target_language: str,
+        on_wait: WaitCallback | None = None,
+    ) -> Transcript:
+        """Run multimodal transcription with retry + stable-model failover.
+
+        High-demand 500 errors switch models immediately instead of repeatedly
+        hammering the same overloaded endpoint. Other retryable 429/5xx errors
+        get a short exponential backoff first.
+        """
+        last_error: BaseException | None = None
+
+        for model_index, model in enumerate(self.transcribe_models):
+            has_fallback = model_index < len(self.transcribe_models) - 1
+
+            for attempt in range(self.transcribe_max_retries + 1):
+                try:
+                    self._notify(
+                        on_wait,
+                        0,
+                        f"Gemini video analysis using {model}"
+                        + (
+                            f" · attempt {attempt + 1}/{self.transcribe_max_retries + 1}"
+                            if attempt > 0
+                            else ""
+                        ),
+                    )
+                    interaction = self.client.interactions.create(
+                        model=model,
+                        input=interaction_input,
+                        response_format=_structured_json_format(),
+                    )
+                    return self._parse_transcript(
+                        interaction.output_text,
+                        target_language,
+                    )
+
+                except Exception as exc:
+                    last_error = exc
+                    text = str(exc).lower()
+
+                    if not is_retryable_gemini_error(exc):
+                        raise
+
+                    # Google explicitly marks "high demand" as temporary capacity
+                    # pressure. In that case, fail over immediately to another stable
+                    # Flash model rather than waiting on the same saturated endpoint.
+                    if "high demand" in text and has_fallback:
+                        next_model = self.transcribe_models[model_index + 1]
+                        self._notify(
+                            on_wait,
+                            0,
+                            f"{model} is under high demand; switching immediately "
+                            f"to fallback model {next_model}",
+                        )
+                        break
+
+                    if attempt < self.transcribe_max_retries:
+                        fallback_delay = min(45.0, 6.0 * (2 ** attempt))
+                        delay = retry_after_seconds(
+                            exc,
+                            default=fallback_delay,
+                        ) + 1.0
+                        self._notify(
+                            on_wait,
+                            delay,
+                            f"{model} returned a temporary Gemini error; "
+                            f"retry {attempt + 1}/{self.transcribe_max_retries} "
+                            f"in {delay:.1f}s",
+                        )
+                        time.sleep(delay)
+                        continue
+
+                    if has_fallback:
+                        next_model = self.transcribe_models[model_index + 1]
+                        self._notify(
+                            on_wait,
+                            0,
+                            f"{model} is still unavailable; switching to "
+                            f"fallback model {next_model}",
+                        )
+                        break
+
+                    raise
+
+        raise RuntimeError(
+            "Gemini video analysis failed on all configured models: "
+            + ", ".join(self.transcribe_models)
+            + (f". Last error: {last_error}" if last_error else "")
+        )
+
+    def transcribe_youtube(
+        self,
+        youtube_url: str,
+        target_language: str,
+        *,
+        on_wait: WaitCallback | None = None,
+    ) -> Transcript:
+        return self._transcribe_with_failover(
+            interaction_input=[
                 {"type": "video", "uri": youtube_url},
                 {"type": "text", "text": self._prompt(target_language)},
             ],
-            response_format=_structured_json_format(),
+            target_language=target_language,
+            on_wait=on_wait,
         )
-        return self._parse_transcript(interaction.output_text, target_language)
 
-    def transcribe_file(self, video_path: Path, target_language: str) -> Transcript:
+    def transcribe_file(
+        self,
+        video_path: Path,
+        target_language: str,
+        *,
+        on_wait: WaitCallback | None = None,
+    ) -> Transcript:
         uploaded = self.client.files.upload(file=str(video_path))
         while not uploaded.state or uploaded.state.name != "ACTIVE":
             if uploaded.state and uploaded.state.name == "FAILED":
@@ -115,9 +265,8 @@ Requirements:
             time.sleep(3)
             uploaded = self.client.files.get(name=uploaded.name)
 
-        interaction = self.client.interactions.create(
-            model=self.transcribe_model,
-            input=[
+        return self._transcribe_with_failover(
+            interaction_input=[
                 {
                     "type": "video",
                     "uri": uploaded.uri,
@@ -125,9 +274,9 @@ Requirements:
                 },
                 {"type": "text", "text": self._prompt(target_language)},
             ],
-            response_format=_structured_json_format(),
+            target_language=target_language,
+            on_wait=on_wait,
         )
-        return self._parse_transcript(interaction.output_text, target_language)
 
     @staticmethod
     def _parse_transcript(text: str, target_language: str) -> Transcript:
@@ -140,7 +289,12 @@ Requirements:
         transcript.segments.sort(key=lambda s: (s.start, s.end))
         return transcript
 
-    def _tts_cache_path(self, prompt: str, speaker_voices: dict[str, str], target_language: str) -> Path:
+    def _tts_cache_path(
+        self,
+        prompt: str,
+        speaker_voices: dict[str, str],
+        target_language: str,
+    ) -> Path:
         payload = json.dumps(
             {
                 "model": self.tts_model,
@@ -166,11 +320,21 @@ Requirements:
         if not speaker_voices:
             raise ValueError("At least one Gemini TTS voice is required")
         if len(speaker_voices) > 2:
-            raise ValueError("Gemini multi-speaker TTS supports at most two speakers per request")
+            raise ValueError(
+                "Gemini multi-speaker TTS supports at most two speakers per request"
+            )
 
         output_wav.parent.mkdir(parents=True, exist_ok=True)
-        cache_path = self._tts_cache_path(prompt, speaker_voices, target_language)
-        if self.tts_cache_enabled and cache_path.exists() and cache_path.stat().st_size > 44:
+        cache_path = self._tts_cache_path(
+            prompt,
+            speaker_voices,
+            target_language,
+        )
+        if (
+            self.tts_cache_enabled
+            and cache_path.exists()
+            and cache_path.stat().st_size > 44
+        ):
             shutil.copy2(cache_path, output_wav)
             return output_wav
 
@@ -212,7 +376,10 @@ Requirements:
                 return output_wav
             except Exception as exc:
                 last_error = exc
-                if not is_retryable_gemini_error(exc) or attempt >= self.tts_max_retries:
+                if (
+                    not is_retryable_gemini_error(exc)
+                    or attempt >= self.tts_max_retries
+                ):
                     raise
 
                 fallback = min(60.0, 4.0 * (2 ** attempt))
@@ -221,12 +388,14 @@ Requirements:
                     delay,
                     on_wait,
                     message=(
-                        f"Gemini rate/server limit encountered; automatic retry {attempt + 1}/"
-                        f"{self.tts_max_retries} in {delay:.1f}s"
+                        f"Gemini rate/server limit encountered; automatic retry "
+                        f"{attempt + 1}/{self.tts_max_retries} in {delay:.1f}s"
                     ),
                 )
 
-        raise RuntimeError(f"Gemini TTS failed after retries: {last_error}")
+        raise RuntimeError(
+            f"Gemini TTS failed after retries: {last_error}"
+        )
 
     def synthesize_chunk(
         self,
@@ -259,8 +428,10 @@ Requirements:
         """Compatibility method for precise one-line mode."""
         prompt = (
             f"Synthesize speech for the following {target_language} dubbing line. "
-            f"Style: {emotion or 'natural'}, clear studio-quality narration, natural conversational pace. "
-            "Speak only the transcript after the TRANSCRIPT label. Do not read these instructions aloud. "
+            f"Style: {emotion or 'natural'}, clear studio-quality narration, "
+            "natural conversational pace. "
+            "Speak only the transcript after the TRANSCRIPT label. "
+            "Do not read these instructions aloud. "
             "Do not add, remove, or paraphrase words.\n\n"
             f"TRANSCRIPT:\n{text.strip()}"
         )

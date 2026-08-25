@@ -39,12 +39,18 @@ def _speaker_roles_and_voices(
             distinct.append(speaker)
 
     if not secondary_voice or secondary_voice == primary_voice:
-        return ({speaker: "Narrator" for speaker in distinct}, {"Narrator": primary_voice})
+        return (
+            {speaker: "Narrator" for speaker in distinct},
+            {"Narrator": primary_voice},
+        )
 
     speaker_roles: dict[str, str] = {}
     for index, speaker in enumerate(distinct):
         speaker_roles[speaker] = "Dubber A" if index % 2 == 0 else "Dubber B"
-    return speaker_roles, {"Dubber A": primary_voice, "Dubber B": secondary_voice}
+    return speaker_roles, {
+        "Dubber A": primary_voice,
+        "Dubber B": secondary_voice,
+    }
 
 
 def run_cloud_audio_dubbing(
@@ -64,15 +70,29 @@ def run_cloud_audio_dubbing(
     if not youtube_url or not youtube_url.strip():
         raise ValueError("youtube_url is required")
 
-    root = output_root or Path(tempfile.mkdtemp(prefix="gemini_cloud_dubber_"))
+    root = output_root or Path(
+        tempfile.mkdtemp(prefix="gemini_cloud_dubber_")
+    )
     root.mkdir(parents=True, exist_ok=True)
     work = root / "work"
     out = root / "output"
     work.mkdir(exist_ok=True)
     out.mkdir(exist_ok=True)
 
-    _progress(progress, 0.05, "Analyzing YouTube directly with Gemini (no cloud download)")
-    transcript = gemini.transcribe_youtube(youtube_url.strip(), target_language)
+    _progress(
+        progress,
+        0.05,
+        "Analyzing YouTube directly with Gemini (no cloud download)",
+    )
+
+    def _on_transcribe_wait(seconds: float, message: str) -> None:
+        _progress(progress, 0.05, message)
+
+    transcript = gemini.transcribe_youtube(
+        youtube_url.strip(),
+        target_language,
+        on_wait=_on_transcribe_wait,
+    )
     if not transcript.segments:
         raise RuntimeError("No spoken dialogue was detected")
 
@@ -85,10 +105,18 @@ def run_cloud_audio_dubbing(
 
     transcript_json = out / "transcript.json"
     transcript_json.write_text(
-        json.dumps(transcript.model_dump(), ensure_ascii=False, indent=2),
+        json.dumps(
+            transcript.model_dump(),
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
-    subtitles = write_srt(transcript.segments, out / "dubbed.srt", translated=True)
+    subtitles = write_srt(
+        transcript.segments,
+        out / "dubbed.srt",
+        translated=True,
+    )
 
     speaker_roles, role_voices = _speaker_roles_and_voices(
         [seg.speaker for seg in transcript.segments],
@@ -105,13 +133,17 @@ def run_cloud_audio_dubbing(
         )
         engine_label = "Smart Chunk"
     else:
-        chunks = build_precise_chunks(transcript.segments, speaker_roles)
+        chunks = build_precise_chunks(
+            transcript.segments,
+            speaker_roles,
+        )
         engine_label = "Precise"
 
     _progress(
         progress,
         0.18,
-        f"{engine_label} plan: {len(transcript.segments)} dialogue segments -> "
+        f"{engine_label} plan: "
+        f"{len(transcript.segments)} dialogue segments -> "
         f"{len(chunks)} Gemini TTS requests",
     )
 
@@ -127,7 +159,9 @@ def run_cloud_audio_dubbing(
         raw = work / f"tts_chunk_{idx:04d}_raw.wav"
         fitted = work / f"tts_chunk_{idx:04d}.wav"
         prompt = chunk.tts_prompt(target_language)
-        chunk_voice_config = {role: role_voices[role] for role in chunk.roles}
+        chunk_voice_config = {
+            role: role_voices[role] for role in chunk.roles
+        }
 
         def _on_tts_wait(
             seconds: float,
@@ -149,16 +183,30 @@ def run_cloud_audio_dubbing(
             raw,
             on_wait=_on_tts_wait,
         )
-        fit_audio_to_duration(raw, fitted, chunk.duration)
+        fit_audio_to_duration(
+            raw,
+            fitted,
+            chunk.duration,
+        )
         chunk_audio.append((chunk.start, fitted))
 
     timeline_end = max(
         0.25,
-        max((seg.end for seg in transcript.segments), default=0.25),
-        max((chunk.end for chunk in chunks), default=0.25),
+        max(
+            (seg.end for seg in transcript.segments),
+            default=0.25,
+        ),
+        max(
+            (chunk.end for chunk in chunks),
+            default=0.25,
+        ),
     )
 
-    _progress(progress, 0.88, "Building cloud dubbing audio track")
+    _progress(
+        progress,
+        0.88,
+        "Building cloud dubbing audio track",
+    )
     dub_audio = compose_dub_track(
         timeline_end,
         chunk_audio,
@@ -172,22 +220,35 @@ def run_cloud_audio_dubbing(
         "target_language": target_language,
         "primary_voice": primary_voice,
         "secondary_voice": secondary_voice or "",
-        "original_audio_percent": max(0, min(100, int(original_audio_percent))),
+        "original_audio_percent": max(
+            0,
+            min(100, int(original_audio_percent)),
+        ),
         "timeline_end_seconds": timeline_end,
         "source_segments": len(transcript.segments),
         "tts_requests": len(chunks),
+        "transcribe_models": gemini.transcribe_models,
         "instructions": (
-            "Download this artifact, then run FINALIZE_CLOUD_DUB_WINDOWS.bat "
-            "on Windows to download the source video locally and create the MP4."
+            "Download this artifact, then run "
+            "FINALIZE_CLOUD_DUB_WINDOWS.bat on Windows "
+            "to download the source video locally and create the MP4."
         ),
     }
     manifest = out / "manifest.json"
     manifest.write_text(
-        json.dumps(manifest_data, ensure_ascii=False, indent=2),
+        json.dumps(
+            manifest_data,
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
-    _progress(progress, 1.0, "Cloud dubbing package ready")
+    _progress(
+        progress,
+        1.0,
+        "Cloud dubbing package ready",
+    )
     return CloudDubResult(
         dub_audio,
         subtitles,
