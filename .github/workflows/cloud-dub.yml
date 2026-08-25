@@ -96,7 +96,7 @@ on:
           - '30'
           - '0'
       original_audio_percent:
-        description: Original soundtrack under dub (0-100)
+        description: Original soundtrack under dub (mixed locally during finalization)
         required: true
         default: '0'
         type: string
@@ -110,7 +110,7 @@ concurrency:
 
 jobs:
   dub:
-    name: Dub video on GitHub runner
+    name: Generate dub audio on GitHub runner
     runs-on: ubuntu-latest
     timeout-minutes: 330
     env:
@@ -147,7 +147,7 @@ jobs:
           restore-keys: |
             gemini-tts-${{ github.repository_id }}-
 
-      - name: Run Smart Chunk cloud dubbing
+      - name: Generate Smart Chunk dubbing package
         shell: bash
         env:
           YOUTUBE_URL: ${{ inputs.youtube_url }}
@@ -161,7 +161,7 @@ jobs:
           if [ "$SECONDARY_VOICE" != "Same" ]; then
             SECONDARY_ARG="--secondary-voice $SECONDARY_VOICE"
           fi
-          python cli.py \
+          python cloud_cli.py \
             --youtube-url "$YOUTUBE_URL" \
             --target-language "$TARGET_LANGUAGE" \
             --primary-voice "$PRIMARY_VOICE" \
@@ -172,10 +172,24 @@ jobs:
             --original-audio-percent "$ORIGINAL_AUDIO_PERCENT" \
             --output-root cloud-output
 
-      - name: Upload dubbed MP4, subtitles and transcript
+      - name: Upload dub audio package
         uses: actions/upload-artifact@v7
         with:
-          name: dubbed-video-${{ github.run_number }}
+          name: cloud-dub-package-${{ github.run_number }}
           path: cloud-output/output/
           if-no-files-found: error
           retention-days: 2
+
+      - name: Finalization instructions
+        shell: bash
+        run: |
+          {
+            echo "## Cloud dub package is ready"
+            echo ""
+            echo "1. Download the **cloud-dub-package** artifact from this run."
+            echo "2. On Windows, update the repository with **Fetch origin / Pull origin** in GitHub Desktop."
+            echo "3. Double-click **FINALIZE_CLOUD_DUB_WINDOWS.bat**."
+            echo "4. Select the downloaded artifact ZIP."
+            echo ""
+            echo "The finalizer downloads the YouTube video locally and creates the final MP4."
+          } >> "$GITHUB_STEP_SUMMARY"
