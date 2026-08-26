@@ -54,7 +54,7 @@ jobs:
       contains(github.event.head_commit.message, '[cloud-test]')
     name: Generate dub audio on GitHub runner
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -85,7 +85,7 @@ jobs:
       # v0.3.4 measured closed-loop timing:
       # synthesize -> measure -> rewrite -> retry, never rush beyond 1.06x.
       DUB_TIMING_MAX_SPEEDUP: '1.06'
-      DUB_TIMING_EXPAND_BELOW: '0.82'
+      DUB_TIMING_EXPAND_BELOW: '0.75'
       DUB_TIMING_FEEDBACK_MAX_PASSES: '3'
 
       GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
@@ -209,13 +209,13 @@ jobs:
 
           for ATTEMPT in 1 2; do
             echo "============================================================"
-            echo "Gemini YouTube Dubber v0.3.4 · attempt ${ATTEMPT}/2"
+            echo "Gemini YouTube Dubber v0.3.5 · attempt ${ATTEMPT}/2"
             echo "Analysis/translation: Gemini GenerateContent"
             echo "Preferred speech: Gemini TTS"
             echo "Automatic speech fallback: Edge Neural TTS"
             echo "Measured timing feedback: ON"
             echo "Edge timing overflow -> AI text repair: ON"
-            echo "Hard speech speed-up limit: ${DUB_TIMING_MAX_SPEEDUP}x"
+            echo "Preferred speed target: ${DUB_TIMING_MAX_SPEEDUP}x; emergency near-miss grace: 1.10x"
             echo "Max AI timing feedback passes: $DUB_TIMING_FEEDBACK_MAX_PASSES"
             echo "Gemini preferred request budget: $GEMINI_TTS_REQUEST_BUDGET"
             echo "============================================================"
@@ -256,8 +256,8 @@ jobs:
             cloud-output/checkpoints
           key: gemini-dub-v3-${{ github.repository_id }}-${{ github.run_id }}
 
-      - name: Upload checkpoint on failure
-        if: failure()
+      - name: Upload checkpoint on failure or cancellation
+        if: ${{ failure() || cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: cloud-dub-checkpoint-${{ github.run_number }}

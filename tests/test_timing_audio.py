@@ -41,6 +41,22 @@ def test_micro_speedup_inside_limit_is_allowed(monkeypatch, tmp_path: Path):
     assert not result.emergency_speedup
 
 
+
+def test_near_miss_109_percent_is_allowed(monkeypatch, tmp_path: Path):
+    captured = []
+    monkeypatch.setattr(timing_audio, "probe_duration", lambda _: 2.18)
+    monkeypatch.setattr(timing_audio, "run_ffmpeg", lambda args: captured.extend(args))
+
+    result = timing_audio.fit_audio_without_slowdown(
+        tmp_path / "in.wav",
+        tmp_path / "out.wav",
+        2.0,
+    )
+
+    assert result.speed_factor == pytest.approx(1.09)
+    assert result.emergency_speedup
+
+
 def test_speedup_above_hard_limit_is_refused(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(timing_audio, "probe_duration", lambda _: 2.4)
 
@@ -52,4 +68,4 @@ def test_speedup_above_hard_limit_is_refused(monkeypatch, tmp_path: Path):
         )
 
     assert captured.value.speed_factor == pytest.approx(1.2)
-    assert captured.value.limit == pytest.approx(1.06)
+    assert captured.value.limit == pytest.approx(1.10)

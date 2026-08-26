@@ -43,7 +43,7 @@ def fit_audio_without_slowdown(
     target_seconds: float,
     *,
     micro_speedup_limit: float = 1.06,
-    hard_speedup_limit: float | None = 1.06,
+    hard_speedup_limit: float | None = 1.10,
 ) -> NaturalFitResult:
     """Fit audio to a slot without slowing speech or silently over-speeding it.
 
