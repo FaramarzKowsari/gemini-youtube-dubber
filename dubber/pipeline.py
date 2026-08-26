@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from .media import (
 from .subtitles import write_srt
 from .timing_audio import fit_audio_without_slowdown
 from .timing_director import adapt_transcript_timing
+from .timing_feedback import synthesize_with_timing_feedback
 from .tts_orchestrator import HybridChunkSynthesizer
 
 
@@ -147,7 +149,11 @@ def run_dubbing(
             "No valid spoken dialogue remained after timestamp validation"
         )
 
-    _progress(progress, 0.18, "Timing Director: matching translated text to original speaking slots")
+    _progress(
+        progress,
+        0.18,
+        "Timing Director: matching translated text to original speaking slots",
+    )
     transcript, timing_report = adapt_transcript_timing(
         transcript,
         gemini=gemini,
@@ -199,21 +205,27 @@ def run_dubbing(
         gemini,
         fallback_engine=tts_fallback_engine,
     )
+    max_speedup = max(1.0, float(os.getenv("DUB_TIMING_MAX_SPEEDUP", "1.06")))
+    expand_below = min(0.95, max(0.35, float(os.getenv("DUB_TIMING_EXPAND_BELOW", "0.82"))))
+    feedback_max_passes = max(0, min(4, int(os.getenv("DUB_TIMING_FEEDBACK_MAX_PASSES", "2"))))
+
     _progress(
         progress,
         0.22,
         f"{engine_label} plan: "
         f"{len(transcript.segments)} dialogue segments → "
-        f"{len(chunks)} speech chunks; Gemini preferred, "
-        f"{hybrid_tts.fallback_engine or 'no'} fallback",
+        f"{len(chunks)} speech chunks; measured feedback ON; "
+        f"hard speed limit {max_speedup:.2f}x",
     )
 
     chunk_audio: list[tuple[float, Path]] = []
+    timing_feedback_records: list[dict] = []
     total_chunks = len(chunks)
     for idx, chunk in enumerate(chunks, start=1):
+        progress_value = 0.24 + 0.56 * (idx - 1) / max(1, total_chunks)
         _progress(
             progress,
-            0.24 + 0.56 * (idx - 1) / max(1, total_chunks),
+            progress_value,
             f"Generating dubbed speech chunk {idx}/{total_chunks} "
             f"· {len(chunk.segments)} lines",
         )
@@ -235,28 +247,68 @@ def run_dubbing(
                 f"{message} · chunk {_idx}/{_total}",
             )
 
-        hybrid_tts.synthesize(
+        def _synthesize(current_chunk, output_path):
+            return hybrid_tts.synthesize(
+                chunk=current_chunk,
+                role_voices=role_voices,
+                target_language=target_language,
+                output_wav=output_path,
+                work_dir=fallback_work,
+                on_wait=_on_tts_wait,
+            )
+
+        def _feedback_progress(_value: float, message: str) -> None:
+            _progress(
+                progress,
+                progress_value,
+                f"{message} · chunk {idx}/{total_chunks}",
+            )
+
+        feedback_result = synthesize_with_timing_feedback(
             chunk=chunk,
-            role_voices=role_voices,
-            target_language=target_language,
             output_wav=raw,
-            work_dir=fallback_work,
-            on_wait=_on_tts_wait,
+            synthesize=_synthesize,
+            gemini=gemini,
+            target_language=target_language,
+            progress=_feedback_progress,
+            max_speedup=max_speedup,
+            expand_below=expand_below,
+            max_passes=feedback_max_passes,
         )
+
         fit_result = fit_audio_without_slowdown(
             raw,
             fitted,
             chunk.duration,
+            micro_speedup_limit=max_speedup,
+            hard_speedup_limit=max_speedup,
         )
-        if fit_result.emergency_speedup:
-            _progress(
-                progress,
-                0.24 + 0.56 * idx / max(1, total_chunks),
-                f"Timing safeguard: chunk {idx} still required "
-                f"{fit_result.speed_factor:.2f}x emergency speed-up; "
-                "consider a stronger Timing Director pass",
-            )
         chunk_audio.append((chunk.start, fitted))
+        timing_feedback_records.append(
+            {
+                "chunk": idx,
+                "start": chunk.start,
+                "end": chunk.end,
+                "fit_speed_factor": fit_result.speed_factor,
+                **feedback_result.to_dict(),
+            }
+        )
+
+    # Closed-loop corrections mutate the segment text. Refresh exported transcript
+    # and subtitles so they exactly match the dialogue used for final speech.
+    transcript_json.write_text(
+        json.dumps(transcript.model_dump(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    subtitles = write_srt(
+        transcript.segments,
+        out / "dubbed.srt",
+        translated=True,
+    )
+    (out / "timing_feedback.json").write_text(
+        json.dumps(timing_feedback_records, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     original_audio = None
     gain_db = -120.0

@@ -13,6 +13,7 @@ from .gemini_client import GeminiDubClient
 from .media import compose_dub_track
 from .timing_audio import fit_audio_without_slowdown
 from .timing_director import adapt_transcript_timing
+from .timing_feedback import synthesize_with_timing_feedback
 from .models import Transcript
 from .subtitles import write_srt
 from .tts_orchestrator import HybridChunkSynthesizer
@@ -87,7 +88,7 @@ def run_cloud_audio_dubbing(
     smart_chunk_max_gap: float = 2.0,
     tts_fallback_engine: str | None = None,
 ) -> CloudDubResult:
-    """Cloud phase: Gemini analyzes/translates; speech can fail over without a new key."""
+    """Cloud phase with measured closed-loop text/audio timing correction."""
 
     if not youtube_url or not youtube_url.strip():
         raise ValueError("youtube_url is required")
@@ -174,8 +175,8 @@ def run_cloud_audio_dubbing(
         valid_segments.append(seg)
     transcript.segments = valid_segments
 
-    # Keep checkpoint as the faithful base translation. Timing adaptation is derived
-    # fresh from it, so repeated runs cannot progressively expand/compress the text.
+    # Keep the checkpoint as the faithful base translation. Timing adaptations are
+    # derived fresh from it, so repeated runs cannot progressively rewrite the text.
     base_payload = json.dumps(
         transcript.model_dump(),
         ensure_ascii=False,
@@ -195,12 +196,10 @@ def run_cloud_audio_dubbing(
         progress=progress,
     )
 
-    payload = json.dumps(
-        transcript.model_dump(),
-        ensure_ascii=False,
-        indent=2,
+    transcript_json.write_text(
+        json.dumps(transcript.model_dump(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
-    transcript_json.write_text(payload, encoding="utf-8")
     timing_report_path = out / "timing_report.json"
     timing_report_path.write_text(
         json.dumps(timing_report.to_dict(), ensure_ascii=False, indent=2),
@@ -230,7 +229,7 @@ def run_cloud_audio_dubbing(
 
         request_budget = max(
             1,
-            int(os.getenv("GEMINI_TTS_REQUEST_BUDGET", "6")),
+            int(os.getenv("GEMINI_TTS_REQUEST_BUDGET", "4")),
         )
         original_request_count = len(chunks)
         adaptive_seconds = max(float(smart_chunk_seconds), 60.0)
@@ -272,22 +271,28 @@ def run_cloud_audio_dubbing(
         fallback_engine=tts_fallback_engine,
     )
 
+    max_speedup = max(1.0, float(os.getenv("DUB_TIMING_MAX_SPEEDUP", "1.06")))
+    expand_below = min(0.95, max(0.35, float(os.getenv("DUB_TIMING_EXPAND_BELOW", "0.82"))))
+    feedback_max_passes = max(0, min(4, int(os.getenv("DUB_TIMING_FEEDBACK_MAX_PASSES", "2"))))
+
     _progress(
         progress,
         0.18,
         f"{engine_label}: "
         f"{len(transcript.segments)} dialogue segments -> "
-        f"{len(chunks)} speech chunks · Gemini preferred, "
-        f"{hybrid_tts.fallback_engine or 'no'} fallback",
+        f"{len(chunks)} speech chunks · measured timing feedback ON · "
+        f"hard speed limit {max_speedup:.2f}x",
     )
 
     chunk_audio: list[tuple[float, Path]] = []
+    timing_feedback_records: list[dict] = []
     total_chunks = len(chunks)
 
     for idx, chunk in enumerate(chunks, start=1):
+        progress_value = 0.20 + 0.62 * (idx - 1) / max(1, total_chunks)
         _progress(
             progress,
-            0.20 + 0.62 * (idx - 1) / max(1, total_chunks),
+            progress_value,
             f"Speech chunk {idx}/{total_chunks} · "
             f"{len(chunk.segments)} lines · "
             f"{chunk.duration:.1f}s timeline span",
@@ -306,33 +311,84 @@ def run_cloud_audio_dubbing(
         ) -> None:
             _progress(
                 progress,
-                0.20
-                + 0.62 * (_idx - 1) / max(1, _total),
+                0.20 + 0.62 * (_idx - 1) / max(1, _total),
                 f"{message} · chunk {_idx}/{_total}",
             )
 
-        hybrid_tts.synthesize(
+        def _synthesize(current_chunk, output_path):
+            return hybrid_tts.synthesize(
+                chunk=current_chunk,
+                role_voices=role_voices,
+                target_language=target_language,
+                output_wav=output_path,
+                work_dir=fallback_work,
+                on_wait=_on_tts_wait,
+            )
+
+        def _feedback_progress(_value: float, message: str) -> None:
+            _progress(
+                progress,
+                progress_value,
+                f"{message} · chunk {idx}/{total_chunks}",
+            )
+
+        feedback_result = synthesize_with_timing_feedback(
             chunk=chunk,
-            role_voices=role_voices,
-            target_language=target_language,
             output_wav=raw,
-            work_dir=fallback_work,
-            on_wait=_on_tts_wait,
+            synthesize=_synthesize,
+            gemini=gemini,
+            target_language=target_language,
+            progress=_feedback_progress,
+            max_speedup=max_speedup,
+            expand_below=expand_below,
+            max_passes=feedback_max_passes,
         )
 
         fit_result = fit_audio_without_slowdown(
             raw,
             fitted,
             chunk.duration,
+            micro_speedup_limit=max_speedup,
+            hard_speedup_limit=max_speedup,
         )
-        if fit_result.emergency_speedup:
+        chunk_audio.append((chunk.start, fitted))
+
+        record = {
+            "chunk": idx,
+            "start": chunk.start,
+            "end": chunk.end,
+            "target_seconds": chunk.duration,
+            "fit_speed_factor": fit_result.speed_factor,
+            **feedback_result.to_dict(),
+        }
+        timing_feedback_records.append(record)
+
+        if feedback_result.passes:
             _progress(
                 progress,
-                0.20 + 0.62 * idx / max(1, total_chunks),
-                f"Timing safeguard: chunk {idx} still required "
-                f"{fit_result.speed_factor:.2f}x emergency speed-up",
+                progress_value,
+                f"Timing feedback converged for chunk {idx}: "
+                f"{feedback_result.initial_seconds:.2f}s -> "
+                f"{feedback_result.final_seconds:.2f}s for a "
+                f"{chunk.duration:.2f}s slot",
             )
-        chunk_audio.append((chunk.start, fitted))
+
+    # Feedback can rewrite segment text after the initial subtitle/transcript files were
+    # written. Refresh them so every exported text file matches the speech actually used.
+    transcript_json.write_text(
+        json.dumps(transcript.model_dump(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    subtitles = write_srt(
+        transcript.segments,
+        out / "dubbed.srt",
+        translated=True,
+    )
+    timing_feedback_path = out / "timing_feedback.json"
+    timing_feedback_path.write_text(
+        json.dumps(timing_feedback_records, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     timeline_end = max(
         0.25,
@@ -359,9 +415,12 @@ def run_cloud_audio_dubbing(
     )
 
     stats = hybrid_tts.stats
+    total_feedback_passes = sum(item["passes"] for item in timing_feedback_records)
+    feedback_chunks = sum(1 for item in timing_feedback_records if item["passes"] > 0)
+
     manifest_data = {
-        "format_version": 4,
-        "mode": "gemini-analysis-ai-timing-hybrid-tts",
+        "format_version": 5,
+        "mode": "gemini-analysis-closed-loop-timing-hybrid-tts",
         "youtube_url": youtube_url.strip(),
         "target_language": target_language,
         "primary_voice": primary_voice,
@@ -379,7 +438,7 @@ def run_cloud_audio_dubbing(
         "transcribe_models": gemini.transcribe_models,
         "gemini_tts_models": gemini.tts_models,
         "gemini_tts_request_budget": int(
-            os.getenv("GEMINI_TTS_REQUEST_BUDGET", "6")
+            os.getenv("GEMINI_TTS_REQUEST_BUDGET", "4")
         ),
         "checkpoint_id": _checkpoint_id(
             youtube_url,
@@ -394,6 +453,15 @@ def run_cloud_audio_dubbing(
             "expanded_segments": timing_report.expanded_segments,
             "kept_segments": timing_report.kept_segments,
             "report_file": "timing_report.json",
+        },
+        "measured_timing_feedback": {
+            "enabled": True,
+            "max_speedup": max_speedup,
+            "expand_below_ratio": expand_below,
+            "max_passes_per_chunk": feedback_max_passes,
+            "chunks_rewritten": feedback_chunks,
+            "total_feedback_passes": total_feedback_passes,
+            "report_file": "timing_feedback.json",
         },
         "instructions": (
             "Download this artifact, then run "

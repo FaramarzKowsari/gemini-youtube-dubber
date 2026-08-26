@@ -58,17 +58,24 @@ jobs:
       GEMINI_HTTP_TIMEOUT_MS: '180000'
       GEMINI_TRANSCRIBE_MAX_RETRIES: '1'
 
-      # Gemini TTS is preferred. If quota/access/network fails, v0.3
-      # immediately finishes the remaining speech with Edge Neural TTS.
+      # Reserve preferred TTS quota for measured timing correction passes.
       GEMINI_TTS_MODEL: gemini-3.1-flash-tts-preview
       GEMINI_TTS_FALLBACK_MODELS: gemini-2.5-flash-preview-tts
-      GEMINI_TTS_REQUEST_BUDGET: '6'
+      GEMINI_TTS_REQUEST_BUDGET: '4'
       GEMINI_TTS_MAX_RETRIES: '0'
       DUB_TTS_FALLBACK_ENGINE: edge
+      EDGE_TTS_MAX_RETRIES: '2'
+
+      # Pre-TTS semantic timing adaptation.
       DUB_TIMING_DIRECTOR: '1'
       DUB_TIMING_OCCUPANCY: '0.94'
       DUB_TIMING_BATCH_SIZE: '40'
-      EDGE_TTS_MAX_RETRIES: '2'
+
+      # v0.3.2 measured closed-loop timing: synthesize -> measure -> rewrite -> retry.
+      DUB_TIMING_MAX_SPEEDUP: '1.06'
+      DUB_TIMING_EXPAND_BELOW: '0.82'
+      DUB_TIMING_FEEDBACK_MAX_PASSES: '2'
+
       GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
 
       YOUTUBE_URL: ${{ inputs.youtube_url }}
@@ -105,6 +112,9 @@ jobs:
             dubber/gemini_client.py \
             dubber/fallback_tts.py \
             dubber/tts_orchestrator.py \
+            dubber/timing_audio.py \
+            dubber/timing_director.py \
+            dubber/timing_feedback.py \
             dubber/cloud_pipeline.py \
             cloud_cli.py
 
@@ -133,10 +143,13 @@ jobs:
 
           for ATTEMPT in 1 2; do
             echo "============================================================"
-            echo "Gemini YouTube Dubber v0.3.0 · attempt ${ATTEMPT}/2"
+            echo "Gemini YouTube Dubber v0.3.2 · attempt ${ATTEMPT}/2"
             echo "Analysis/translation: Gemini GenerateContent"
             echo "Preferred speech: Gemini TTS"
             echo "Automatic speech fallback: Edge Neural TTS"
+            echo "Measured timing feedback: ON"
+            echo "Hard speech speed-up limit: ${DUB_TIMING_MAX_SPEEDUP}x"
+            echo "Max AI timing feedback passes: $DUB_TIMING_FEEDBACK_MAX_PASSES"
             echo "Gemini preferred request budget: $GEMINI_TTS_REQUEST_BUDGET"
             echo "============================================================"
 
@@ -203,8 +216,10 @@ jobs:
           {
             echo "## Cloud dub package is ready"
             echo ""
-            echo "Gemini analyzed and translated the source."
-            echo "Gemini TTS was preferred; Edge Neural TTS automatically completed any quota-limited remainder."
+            echo "v0.3.2 measured every synthesized chunk."
+            echo "Overlong speech was rewritten and re-synthesized instead of being rushed."
+            echo "Short speech was safely expanded when possible; otherwise it stayed natural and was padded."
+            echo "See timing_feedback.json for per-chunk measurements."
             echo ""
             echo "Download the cloud-dub-package artifact."
             echo "Then run FINALIZE_CLOUD_DUB_WINDOWS.bat on Windows."

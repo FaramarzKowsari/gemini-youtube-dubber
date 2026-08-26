@@ -16,7 +16,6 @@ def test_cloud_workflow_uses_secret_hybrid_cli_and_manual_trigger_only():
     assert "DUB_TTS_FALLBACK_ENGINE: edge" in text
     assert "actions/upload-artifact@v7" in text
     assert "cloud-output/output/" in text
-    # Ordinary pushes must never burn Gemini quota.
     assert "\n  push:" not in text
 
 
@@ -34,8 +33,12 @@ def test_api_key_is_not_hardcoded_in_workflow():
     assert "AIza" not in text
 
 
-def test_cloud_workflow_enables_ai_timing_director():
+def test_cloud_workflow_enables_ai_timing_director_and_measured_feedback():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "DUB_TIMING_DIRECTOR" in text
     assert "DUB_TIMING_OCCUPANCY" in text
     assert "DUB_TIMING_BATCH_SIZE" in text
+    assert "DUB_TIMING_MAX_SPEEDUP: '1.06'" in text
+    assert "DUB_TIMING_EXPAND_BELOW: '0.82'" in text
+    assert "DUB_TIMING_FEEDBACK_MAX_PASSES: '2'" in text
+    assert "dubber/timing_feedback.py" in text
