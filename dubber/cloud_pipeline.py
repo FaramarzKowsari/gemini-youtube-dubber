@@ -183,6 +183,10 @@ def run_cloud_audio_dubbing(
         indent=2,
     )
     checkpoint_json.write_text(base_payload, encoding="utf-8")
+    (out / "base_transcript.json").write_text(
+        base_payload,
+        encoding="utf-8",
+    )
 
     _progress(
         progress,
@@ -419,7 +423,7 @@ def run_cloud_audio_dubbing(
     feedback_chunks = sum(1 for item in timing_feedback_records if item["passes"] > 0)
 
     manifest_data = {
-        "format_version": 5,
+        "format_version": 6,
         "mode": "gemini-analysis-closed-loop-timing-hybrid-tts",
         "youtube_url": youtube_url.strip(),
         "target_language": target_language,
@@ -444,6 +448,7 @@ def run_cloud_audio_dubbing(
             youtube_url,
             target_language,
         ),
+        "base_transcript_file": "base_transcript.json",
         "timing_director": {
             "enabled": timing_report.enabled,
             "used_ai": timing_report.used_ai,

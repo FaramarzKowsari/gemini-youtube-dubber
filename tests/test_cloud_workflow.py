@@ -16,7 +16,8 @@ def test_cloud_workflow_uses_secret_hybrid_cli_and_manual_trigger_only():
     assert "DUB_TTS_FALLBACK_ENGINE: edge" in text
     assert "actions/upload-artifact@v7" in text
     assert "cloud-output/output/" in text
-    assert "\n  push:" not in text
+    assert "\n  push:" in text
+    assert "contains(github.event.head_commit.message, '[cloud-test]')" in text
 
 
 def test_cloud_workflow_saves_progress_even_after_failure():
@@ -42,3 +43,15 @@ def test_cloud_workflow_enables_ai_timing_director_and_measured_feedback():
     assert "DUB_TIMING_EXPAND_BELOW: '0.82'" in text
     assert "DUB_TIMING_FEEDBACK_MAX_PASSES: '2'" in text
     assert "dubber/timing_feedback.py" in text
+
+def test_cloud_workflow_recovers_prior_transcript_and_uses_stable_analysis_fallback():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "actions: read" in text
+    assert "Recover matching transcript from prior successful artifact" in text
+    assert "scripts/preseed_checkpoint.py" in text
+    assert "gh run list" in text
+    assert "--workflow cloud-dub.yml" in text
+    assert "--status success" in text
+    assert "GEMINI_TRANSCRIBE_MODEL: gemini-2.5-flash" in text
+    assert "gemini-2.5-flash-lite" in text
+

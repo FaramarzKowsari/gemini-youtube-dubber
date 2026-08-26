@@ -72,6 +72,6 @@ def get_settings(api_key_override: str | None = None) -> Settings:
     api_key = (api_key_override or os.getenv("GEMINI_API_KEY", "")).strip()
     return Settings(
         api_key=api_key,
-        transcribe_model=os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-3.7-flash"),
+        transcribe_model=os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-2.5-flash"),
         tts_model=os.getenv("GEMINI_TTS_MODEL", "gemini-3.1-flash-tts-preview"),
     )

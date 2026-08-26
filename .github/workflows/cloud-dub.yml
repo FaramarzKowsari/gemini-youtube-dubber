@@ -36,8 +36,12 @@ on:
         default: '0'
         type: string
 
+  push:
+    branches: [main]
+
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: cloud-dub-${{ github.actor }}
@@ -45,6 +49,9 @@ concurrency:
 
 jobs:
   dub:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[cloud-test]')
     name: Generate dub audio on GitHub runner
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -53,10 +60,10 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_DUBBER_CACHE_DIR: .tts-cache
 
-      GEMINI_TRANSCRIBE_MODEL: gemini-3.6-flash
-      GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-3.5-flash,gemini-3.7-flash
-      GEMINI_HTTP_TIMEOUT_MS: '180000'
-      GEMINI_TRANSCRIBE_MAX_RETRIES: '1'
+      GEMINI_TRANSCRIBE_MODEL: gemini-2.5-flash
+      GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash-lite,gemini-3.7-flash
+      GEMINI_HTTP_TIMEOUT_MS: '120000'
+      GEMINI_TRANSCRIBE_MAX_RETRIES: '0'
 
       # Reserve preferred TTS quota for measured timing correction passes.
       GEMINI_TTS_MODEL: gemini-3.1-flash-tts-preview
@@ -78,12 +85,12 @@ jobs:
 
       GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
 
-      YOUTUBE_URL: ${{ inputs.youtube_url }}
-      TARGET_LANGUAGE: ${{ inputs.target_language }}
-      PRIMARY_VOICE: ${{ inputs.primary_voice }}
-      SECONDARY_VOICE: ${{ inputs.secondary_voice }}
-      CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
-      ORIGINAL_AUDIO_PERCENT: ${{ inputs.original_audio_percent }}
+      YOUTUBE_URL: ${{ github.event.inputs.youtube_url || 'https://www.youtube.com/watch?v=B_-Y95shNyA' }}
+      TARGET_LANGUAGE: ${{ github.event.inputs.target_language || 'Persian (فارسی)' }}
+      PRIMARY_VOICE: ${{ github.event.inputs.primary_voice || 'Kore' }}
+      SECONDARY_VOICE: ${{ github.event.inputs.secondary_voice || 'Same' }}
+      CHUNK_SECONDS: ${{ github.event.inputs.chunk_seconds || '60' }}
+      ORIGINAL_AUDIO_PERCENT: ${{ github.event.inputs.original_audio_percent || '0' }}
 
     steps:
       - name: Checkout
@@ -116,6 +123,7 @@ jobs:
             dubber/timing_director.py \
             dubber/timing_feedback.py \
             dubber/cloud_pipeline.py \
+            scripts/preseed_checkpoint.py \
             cloud_cli.py
 
       - name: Restore reusable speech and transcript cache
@@ -128,6 +136,59 @@ jobs:
           key: gemini-dub-v3-${{ github.repository_id }}-${{ github.run_id }}
           restore-keys: |
             gemini-dub-v3-${{ github.repository_id }}-
+
+      - name: Recover matching transcript from prior successful artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          mkdir -p .prior-cloud-dubs
+
+          # A real cache checkpoint wins immediately.
+          python scripts/preseed_checkpoint.py \
+            --youtube-url "$YOUTUBE_URL" \
+            --target-language "$TARGET_LANGUAGE" \
+            --search-root cloud-output \
+            --output-root cloud-output
+          if [ "$?" -eq 0 ]; then
+            echo "A matching checkpoint is already available; prior artifacts are not needed."
+            exit 0
+          fi
+
+          FOUND=0
+          while read -r RUN_ID; do
+            [ -z "$RUN_ID" ] && continue
+            rm -rf .prior-cloud-dubs/*
+            echo "Checking successful Cloud Dub run $RUN_ID for a reusable base transcript..."
+            gh run download "$RUN_ID" \
+              --pattern 'cloud-dub-package-*' \
+              --dir .prior-cloud-dubs >/dev/null 2>&1 || continue
+
+            python scripts/preseed_checkpoint.py \
+              --youtube-url "$YOUTUBE_URL" \
+              --target-language "$TARGET_LANGUAGE" \
+              --search-root .prior-cloud-dubs \
+              --output-root cloud-output
+            if [ "$?" -eq 0 ]; then
+              FOUND=1
+              echo "Recovered matching transcript from successful run $RUN_ID."
+              break
+            fi
+          done < <(
+            gh run list \
+              --workflow cloud-dub.yml \
+              --status success \
+              --limit 10 \
+              --json databaseId \
+              --jq '.[].databaseId' 2>/dev/null
+          )
+
+          rm -rf .prior-cloud-dubs
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No matching prior transcript artifact found; resilient Gemini analysis will run."
+          fi
+          exit 0
 
       - name: Generate hybrid dubbing package
         shell: bash
@@ -143,7 +204,7 @@ jobs:
 
           for ATTEMPT in 1 2; do
             echo "============================================================"
-            echo "Gemini YouTube Dubber v0.3.2 · attempt ${ATTEMPT}/2"
+            echo "Gemini YouTube Dubber v0.3.3 · attempt ${ATTEMPT}/2"
             echo "Analysis/translation: Gemini GenerateContent"
             echo "Preferred speech: Gemini TTS"
             echo "Automatic speech fallback: Edge Neural TTS"

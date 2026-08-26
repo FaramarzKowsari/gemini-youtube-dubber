@@ -136,7 +136,7 @@ class GeminiDubClient:
         if transcribe_fallback_models is None:
             env_fallbacks = os.getenv(
                 "GEMINI_TRANSCRIBE_FALLBACK_MODELS",
-                "gemini-3.5-flash,gemini-3.7-flash",
+                "gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash-lite,gemini-3.7-flash",
             )
             transcribe_fallback_models = [
                 item.strip()
@@ -253,15 +253,41 @@ Requirements:
                         or "error code: 403" in lower
                     )
                     high_demand = "high demand" in lower
+                    deadline_or_unavailable = any(
+                        signal in lower
+                        for signal in (
+                            "deadline_exceeded",
+                            "deadline expired",
+                            "error code: 504",
+                            "504 deadline",
+                            "503 unavailable",
+                            "status': 'unavailable",
+                            'status": "unavailable',
+                            "service unavailable",
+                        )
+                    )
 
-                    if (permission_problem or high_demand) and has_fallback:
+                    # A model that is overloaded or has already hit its server-side
+                    # deadline should not be retried while other stable models remain.
+                    # Fail over immediately so one slow model cannot consume minutes.
+                    if (
+                        permission_problem
+                        or high_demand
+                        or deadline_or_unavailable
+                    ) and has_fallback:
                         next_model = self.transcribe_models[model_index + 1]
+                        reason = (
+                            "permission"
+                            if permission_problem
+                            else "high demand"
+                            if high_demand
+                            else "deadline/unavailable"
+                        )
                         self._notify(
                             on_wait,
                             0,
-                            f"{model} unavailable for this request "
-                            f"({ 'permission' if permission_problem else 'high demand' }); "
-                            f"switching to {next_model}",
+                            f"{model} unavailable for this request ({reason}); "
+                            f"switching immediately to {next_model}",
                         )
                         break
 
@@ -361,7 +387,14 @@ Requirements:
                     lower = str(exc).lower()
 
                     if (
-                        ("permission_denied" in lower or "high demand" in lower)
+                        (
+                            "permission_denied" in lower
+                            or "high demand" in lower
+                            or "deadline_exceeded" in lower
+                            or "deadline expired" in lower
+                            or "error code: 504" in lower
+                            or "503 unavailable" in lower
+                        )
                         and has_fallback
                     ):
                         break
