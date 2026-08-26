@@ -1,39 +1,41 @@
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 
 CLIENT = Path(__file__).parents[1] / "dubber" / "gemini_client.py"
 
 
-def _create_calls():
-    tree = ast.parse(CLIENT.read_text(encoding="utf-8"))
-    calls = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "create":
-            calls.append(node)
-    return calls
-
-
-def test_legacy_response_mime_type_is_not_used():
+def test_transcription_uses_generate_content_structured_json():
     source = CLIENT.read_text(encoding="utf-8")
-    # The identifier may occur in comments/docstrings explaining the migration,
-    # but must never be passed as a create() keyword anymore.
-    for call in _create_calls():
-        assert all(keyword.arg != "response_mime_type" for keyword in call.keywords)
+    block = source.split("def _generate_content_transcript", 1)[1].split(
+        "def transcribe_youtube", 1
+    )[0]
+
+    assert "self.client.models.generate_content(" in block
+    assert 'response_mime_type="application/json"' in block
+    assert "response_json_schema=TRANSCRIPT_SCHEMA" in block
+    assert "self.client.interactions.create(" not in block
 
 
-def test_structured_output_uses_text_response_format():
+def test_youtube_input_uses_public_uri_without_forced_mp4_mime():
     source = CLIENT.read_text(encoding="utf-8")
-    assert '"type": "text"' in source
-    assert '"mime_type": "application/json"' in source
-    assert '"schema": TRANSCRIPT_SCHEMA' in source
+    block = source.split("def _generate_content_transcript", 1)[1].split(
+        "def transcribe_youtube", 1
+    )[0]
+
+    assert "types.FileData(" in block
+    assert "file_uri=youtube_url" in block
+    assert 'mime_type="video/mp4"' not in block
 
 
-def test_youtube_url_does_not_force_mp4_mime_type():
+def test_generate_content_transcription_keeps_model_failover():
     source = CLIENT.read_text(encoding="utf-8")
-    marker = 'def transcribe_youtube'
-    end_marker = 'def transcribe_file'
-    block = source.split(marker, 1)[1].split(end_marker, 1)[0]
-    assert '"mime_type": "video/mp4"' not in block
+    block = source.split("def _generate_content_transcript", 1)[1].split(
+        "def transcribe_youtube", 1
+    )[0]
+
+    assert "self.transcribe_models" in block
+    assert "high_demand" in block
+    assert "has_fallback" in block
+    assert "is_retryable_gemini_error" in block

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -13,11 +14,13 @@ from .media import (
     compose_dub_track,
     download_youtube,
     extract_original_audio,
-    fit_audio_to_duration,
     mux_video,
     probe_duration,
 )
 from .subtitles import write_srt
+from .timing_audio import fit_audio_without_slowdown
+from .timing_director import adapt_transcript_timing
+from .tts_orchestrator import HybridChunkSynthesizer
 
 
 ProgressFn = Callable[[float, str], None]
@@ -31,6 +34,7 @@ class DubResult:
     work_dir: Path
     source_segments: int = 0
     tts_requests: int = 0
+    fallback_chunks: int = 0
 
 
 def _progress(cb: ProgressFn | None, value: float, message: str) -> None:
@@ -39,21 +43,30 @@ def _progress(cb: ProgressFn | None, value: float, message: str) -> None:
 
 
 def _speaker_roles_and_voices(
-    speakers: list[str], primary_voice: str, secondary_voice: str | None
+    speakers: list[str],
+    primary_voice: str,
+    secondary_voice: str | None,
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Map arbitrary source speakers onto Gemini's one/two-speaker TTS limit."""
     distinct: list[str] = []
     for speaker in speakers:
         if speaker not in distinct:
             distinct.append(speaker)
 
     if not secondary_voice or secondary_voice == primary_voice:
-        return ({speaker: "Narrator" for speaker in distinct}, {"Narrator": primary_voice})
+        return (
+            {speaker: "Narrator" for speaker in distinct},
+            {"Narrator": primary_voice},
+        )
 
     speaker_roles: dict[str, str] = {}
     for index, speaker in enumerate(distinct):
-        speaker_roles[speaker] = "Dubber A" if index % 2 == 0 else "Dubber B"
-    return speaker_roles, {"Dubber A": primary_voice, "Dubber B": secondary_voice}
+        speaker_roles[speaker] = (
+            "Dubber A" if index % 2 == 0 else "Dubber B"
+        )
+    return speaker_roles, {
+        "Dubber A": primary_voice,
+        "Dubber B": secondary_voice,
+    }
 
 
 def run_dubbing(
@@ -69,11 +82,16 @@ def run_dubbing(
     progress: ProgressFn | None = None,
     smart_chunk_seconds: float = 45.0,
     smart_chunk_max_gap: float = 1.25,
+    tts_fallback_engine: str | None = None,
 ) -> DubResult:
     if bool(youtube_url) == bool(uploaded_video):
-        raise ValueError("Provide exactly one source: youtube_url or uploaded_video")
+        raise ValueError(
+            "Provide exactly one source: youtube_url or uploaded_video"
+        )
 
-    root = output_root or Path(tempfile.mkdtemp(prefix="gemini_dubber_"))
+    root = output_root or Path(
+        tempfile.mkdtemp(prefix="gemini_dubber_")
+    )
     root.mkdir(parents=True, exist_ok=True)
     work = root / "work"
     out = root / "output"
@@ -84,17 +102,32 @@ def run_dubbing(
     if youtube_url:
         _progress(progress, 0.06, "Downloading source video")
         video_path = download_youtube(youtube_url, work)
-        _progress(progress, 0.16, "Analyzing and translating with Gemini")
+        _progress(
+            progress,
+            0.16,
+            "Analyzing and translating with Gemini",
+        )
         try:
-            transcript = gemini.transcribe_youtube(youtube_url, target_language)
+            transcript = gemini.transcribe_youtube(
+                youtube_url,
+                target_language,
+            )
         except Exception:
-            transcript = gemini.transcribe_file(video_path, target_language)
+            transcript = gemini.transcribe_file(
+                video_path,
+                target_language,
+            )
     else:
         assert uploaded_video is not None
-        video_path = work / ("source" + uploaded_video.suffix.lower())
+        video_path = work / (
+            "source" + uploaded_video.suffix.lower()
+        )
         shutil.copy2(uploaded_video, video_path)
         _progress(progress, 0.10, "Uploading video to Gemini")
-        transcript = gemini.transcribe_file(video_path, target_language)
+        transcript = gemini.transcribe_file(
+            video_path,
+            target_language,
+        )
 
     if not transcript.segments:
         raise RuntimeError("No spoken dialogue was detected")
@@ -110,16 +143,41 @@ def run_dubbing(
         valid_segments.append(seg)
     transcript.segments = valid_segments
     if not transcript.segments:
-        raise RuntimeError("No valid spoken dialogue remained after timestamp validation")
+        raise RuntimeError(
+            "No valid spoken dialogue remained after timestamp validation"
+        )
+
+    _progress(progress, 0.18, "Timing Director: matching translated text to original speaking slots")
+    transcript, timing_report = adapt_transcript_timing(
+        transcript,
+        gemini=gemini,
+        target_language=target_language,
+        progress=progress,
+    )
 
     transcript_json = out / "transcript.json"
     transcript_json.write_text(
-        json.dumps(transcript.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(
+            transcript.model_dump(),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
-    subtitles = write_srt(transcript.segments, out / "dubbed.srt", translated=True)
+    (out / "timing_report.json").write_text(
+        json.dumps(timing_report.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    subtitles = write_srt(
+        transcript.segments,
+        out / "dubbed.srt",
+        translated=True,
+    )
 
     speaker_roles, role_voices = _speaker_roles_and_voices(
-        [seg.speaker for seg in transcript.segments], primary_voice, secondary_voice
+        [seg.speaker for seg in transcript.segments],
+        primary_voice,
+        secondary_voice,
     )
 
     if smart_chunk_seconds and smart_chunk_seconds > 0:
@@ -131,13 +189,23 @@ def run_dubbing(
         )
         engine_label = "Smart Chunk"
     else:
-        chunks = build_precise_chunks(transcript.segments, speaker_roles)
+        chunks = build_precise_chunks(
+            transcript.segments,
+            speaker_roles,
+        )
         engine_label = "Precise"
 
+    hybrid_tts = HybridChunkSynthesizer(
+        gemini,
+        fallback_engine=tts_fallback_engine,
+    )
     _progress(
         progress,
         0.22,
-        f"{engine_label} plan: {len(transcript.segments)} dialogue segments → {len(chunks)} Gemini TTS requests",
+        f"{engine_label} plan: "
+        f"{len(transcript.segments)} dialogue segments → "
+        f"{len(chunks)} speech chunks; Gemini preferred, "
+        f"{hybrid_tts.fallback_engine or 'no'} fallback",
     )
 
     chunk_audio: list[tuple[float, Path]] = []
@@ -146,13 +214,12 @@ def run_dubbing(
         _progress(
             progress,
             0.24 + 0.56 * (idx - 1) / max(1, total_chunks),
-            f"Generating dubbed speech chunk {idx}/{total_chunks} · {len(chunk.segments)} lines",
+            f"Generating dubbed speech chunk {idx}/{total_chunks} "
+            f"· {len(chunk.segments)} lines",
         )
         raw = work / f"tts_chunk_{idx:04d}_raw.wav"
         fitted = work / f"tts_chunk_{idx:04d}.wav"
-        prompt = chunk.tts_prompt(target_language)
-        used_roles = chunk.roles
-        chunk_voice_config = {role: role_voices[role] for role in used_roles}
+        fallback_work = work / f"fallback_chunk_{idx:04d}"
 
         def _on_tts_wait(
             seconds: float,
@@ -163,29 +230,49 @@ def run_dubbing(
         ) -> None:
             _progress(
                 progress,
-                0.24 + 0.56 * (_idx - 1) / max(1, _total),
+                0.24
+                + 0.56 * (_idx - 1) / max(1, _total),
                 f"{message} · chunk {_idx}/{_total}",
             )
 
-        gemini.synthesize_chunk(
-            prompt,
-            chunk_voice_config,
-            target_language,
-            raw,
+        hybrid_tts.synthesize(
+            chunk=chunk,
+            role_voices=role_voices,
+            target_language=target_language,
+            output_wav=raw,
+            work_dir=fallback_work,
             on_wait=_on_tts_wait,
         )
-        # Time-fit the whole chunk to its original timeline span. This preserves the
-        # video duration while Gemini handles the natural intra-chunk speaker rhythm.
-        fit_audio_to_duration(raw, fitted, chunk.duration)
+        fit_result = fit_audio_without_slowdown(
+            raw,
+            fitted,
+            chunk.duration,
+        )
+        if fit_result.emergency_speedup:
+            _progress(
+                progress,
+                0.24 + 0.56 * idx / max(1, total_chunks),
+                f"Timing safeguard: chunk {idx} still required "
+                f"{fit_result.speed_factor:.2f}x emergency speed-up; "
+                "consider a stronger Timing Director pass",
+            )
         chunk_audio.append((chunk.start, fitted))
 
     original_audio = None
     gain_db = -120.0
     if original_audio_percent > 0:
-        _progress(progress, 0.82, "Extracting original soundtrack")
-        original_audio = extract_original_audio(video_path, work / "original.wav")
-        import math
-        gain_db = 20 * math.log10(max(0.01, original_audio_percent / 100.0))
+        _progress(
+            progress,
+            0.82,
+            "Extracting original soundtrack",
+        )
+        original_audio = extract_original_audio(
+            video_path,
+            work / "original.wav",
+        )
+        gain_db = 20 * math.log10(
+            max(0.01, original_audio_percent / 100.0)
+        )
 
     _progress(progress, 0.88, "Mixing dubbed audio")
     dub_track = compose_dub_track(
@@ -198,8 +285,13 @@ def run_dubbing(
 
     final_video = out / "dubbed_video.mp4"
     _progress(progress, 0.95, "Muxing final MP4")
-    mux_video(video_path, dub_track, final_video)
+    mux_video(
+        video_path,
+        dub_track,
+        final_video,
+    )
     _progress(progress, 1.0, "Done")
+
     return DubResult(
         final_video,
         subtitles,
@@ -207,4 +299,5 @@ def run_dubbing(
         root,
         source_segments=len(transcript.segments),
         tts_requests=len(chunks),
+        fallback_chunks=hybrid_tts.stats.fallback_chunks,
     )

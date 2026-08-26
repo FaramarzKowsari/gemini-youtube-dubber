@@ -1,6 +1,13 @@
 # Gemini YouTube Dubber
 
-Gemini YouTube Dubber turns a public YouTube video or your own video file into a translated, dubbed MP4. Persian is the default target language. Version **0.2.0** adds **Smart Chunk TTS** and a **GitHub Actions Cloud Dub** mode so a public GitHub repository can do the video processing on GitHub-hosted Linux runners instead of your Windows PC.
+Gemini YouTube Dubber turns a public YouTube video or your own video file into a translated, dubbed MP4. Persian is the default target language. Version **0.3.1** adds an AI Timing Director that adapts translated dialogue length before speech synthesis, while retaining Gemini video intelligence and the hybrid TTS quota fallback.
+
+## AI Timing Director — v0.3.1
+
+Before speech synthesis, Gemini now performs a second, timing-aware dialogue adaptation pass. Every translated segment is given its original start/end time, source dialogue, initial translation, speaker, emotion, and target speech duration. If the translation would be too long at a normal speaking rate, Gemini compresses the wording while preserving the meaning. If it would be too short, Gemini expands only through semantically equivalent natural phrasing and is explicitly forbidden from inventing facts.
+
+The audio stage also no longer slows a short spoken clip just to fill an empty slot. Short speech stays at its natural rate and the remainder is padded with silence. This removes the previous "sometimes very fast, sometimes very slow" effect caused by forcing every generated WAV to the exact duration with unrestricted time stretching.
+
 
 ## Why v0.2.0 is much faster
 

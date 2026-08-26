@@ -36,11 +36,6 @@ on:
         default: '0'
         type: string
 
-  # Temporary self-test trigger. It runs only when the pushed commit message
-  # contains [cloud-test], so ordinary pushes do not consume Gemini quota.
-  push:
-    branches: [main]
-
 permissions:
   contents: read
 
@@ -50,9 +45,6 @@ concurrency:
 
 jobs:
   dub:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[cloud-test]')
     name: Generate dub audio on GitHub runner
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -61,26 +53,30 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_DUBBER_CACHE_DIR: .tts-cache
 
-      # GenerateContent is more compatible with API-key projects for this
-      # YouTube workload than background Interaction retrieval.
       GEMINI_TRANSCRIBE_MODEL: gemini-3.6-flash
       GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-3.5-flash,gemini-3.7-flash
       GEMINI_HTTP_TIMEOUT_MS: '180000'
       GEMINI_TRANSCRIBE_MAX_RETRIES: '1'
+
+      # Gemini TTS is preferred. If quota/access/network fails, v0.3
+      # immediately finishes the remaining speech with Edge Neural TTS.
       GEMINI_TTS_MODEL: gemini-3.1-flash-tts-preview
       GEMINI_TTS_FALLBACK_MODELS: gemini-2.5-flash-preview-tts
-      GEMINI_TTS_REQUEST_BUDGET: '8'
-      GEMINI_TTS_MAX_RETRIES: '4'
+      GEMINI_TTS_REQUEST_BUDGET: '6'
+      GEMINI_TTS_MAX_RETRIES: '0'
+      DUB_TTS_FALLBACK_ENGINE: edge
+      DUB_TIMING_DIRECTOR: '1'
+      DUB_TIMING_OCCUPANCY: '0.94'
+      DUB_TIMING_BATCH_SIZE: '40'
+      EDGE_TTS_MAX_RETRIES: '2'
       GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
 
-      # workflow_dispatch values; for our one-time [cloud-test] push these
-      # fall back to the same short test video already used in previous runs.
-      YOUTUBE_URL: ${{ inputs.youtube_url || 'https://www.youtube.com/watch?v=B_-Y95shNyA' }}
-      TARGET_LANGUAGE: ${{ inputs.target_language || 'Persian (فارسی)' }}
-      PRIMARY_VOICE: ${{ inputs.primary_voice || 'Kore' }}
-      SECONDARY_VOICE: ${{ inputs.secondary_voice || 'Same' }}
-      CHUNK_SECONDS: ${{ inputs.chunk_seconds || '60' }}
-      ORIGINAL_AUDIO_PERCENT: ${{ inputs.original_audio_percent || '0' }}
+      YOUTUBE_URL: ${{ inputs.youtube_url }}
+      TARGET_LANGUAGE: ${{ inputs.target_language }}
+      PRIMARY_VOICE: ${{ inputs.primary_voice }}
+      SECONDARY_VOICE: ${{ inputs.secondary_voice }}
+      CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
+      ORIGINAL_AUDIO_PERCENT: ${{ inputs.original_audio_percent }}
 
     steps:
       - name: Checkout
@@ -107,19 +103,23 @@ jobs:
         run: |
           python -m py_compile \
             dubber/gemini_client.py \
+            dubber/fallback_tts.py \
+            dubber/tts_orchestrator.py \
             dubber/cloud_pipeline.py \
             cloud_cli.py
 
-      - name: Restore reusable TTS cache
-        uses: actions/cache@v5
+      - name: Restore reusable speech and transcript cache
+        id: dub-cache-restore
+        uses: actions/cache/restore@v6
         with:
-          path: .tts-cache
-          key: gemini-tts-${{ github.repository_id }}-${{ github.run_id }}
+          path: |
+            .tts-cache
+            cloud-output/checkpoints
+          key: gemini-dub-v3-${{ github.repository_id }}-${{ github.run_id }}
           restore-keys: |
-            gemini-tts-${{ github.repository_id }}-
-          save-always: true
+            gemini-dub-v3-${{ github.repository_id }}-
 
-      - name: Generate Smart Chunk dubbing package
+      - name: Generate hybrid dubbing package
         shell: bash
         run: |
           set +e
@@ -133,12 +133,11 @@ jobs:
 
           for ATTEMPT in 1 2; do
             echo "============================================================"
-            echo "Cloud Dub v0.2.6 process attempt ${ATTEMPT}/2"
-            echo "Video analysis API: GenerateContent"
-            echo "Primary analysis model: $GEMINI_TRANSCRIBE_MODEL"
-            echo "Transcript checkpoint reuse: enabled"
-            echo "Free-tier TTS request budget: $GEMINI_TTS_REQUEST_BUDGET"
-            echo "TTS fallback: $GEMINI_TTS_MODEL -> $GEMINI_TTS_FALLBACK_MODELS"
+            echo "Gemini YouTube Dubber v0.3.0 · attempt ${ATTEMPT}/2"
+            echo "Analysis/translation: Gemini GenerateContent"
+            echo "Preferred speech: Gemini TTS"
+            echo "Automatic speech fallback: Edge Neural TTS"
+            echo "Gemini preferred request budget: $GEMINI_TTS_REQUEST_BUDGET"
             echo "============================================================"
 
             python cloud_cli.py \
@@ -149,6 +148,7 @@ jobs:
               --chunk-seconds "$CHUNK_SECONDS" \
               --chunk-max-gap 2.0 \
               --tts-rpm 3 \
+              --fallback-tts edge \
               --original-audio-percent "$ORIGINAL_AUDIO_PERCENT" \
               --output-root cloud-output
 
@@ -159,22 +159,33 @@ jobs:
             fi
 
             if [ "$ATTEMPT" -lt 2 ]; then
-              echo "::warning::Process failed with code ${LAST_STATUS}; retrying in 15s. If transcript.json exists, analysis will be skipped."
-              sleep 15
+              echo "::warning::Attempt failed with code ${LAST_STATUS}; retrying in 10s. Matching transcript and speech cache will be reused."
+              sleep 10
             fi
           done
 
           echo "::error::Cloud Dub failed after 2 bounded process attempts."
           exit "$LAST_STATUS"
 
+      - name: Save reusable speech and transcript cache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            .tts-cache
+            cloud-output/checkpoints
+          key: gemini-dub-v3-${{ github.repository_id }}-${{ github.run_id }}
+
       - name: Upload checkpoint on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: cloud-dub-checkpoint-${{ github.run_number }}
-          path: cloud-output/output/
+          path: |
+            cloud-output/output/
+            cloud-output/checkpoints/
           if-no-files-found: ignore
-          retention-days: 1
+          retention-days: 2
 
       - name: Upload dub audio package
         if: success()
@@ -191,6 +202,9 @@ jobs:
         run: |
           {
             echo "## Cloud dub package is ready"
+            echo ""
+            echo "Gemini analyzed and translated the source."
+            echo "Gemini TTS was preferred; Edge Neural TTS automatically completed any quota-limited remainder."
             echo ""
             echo "Download the cloud-dub-package artifact."
             echo "Then run FINALIZE_CLOUD_DUB_WINDOWS.bat on Windows."

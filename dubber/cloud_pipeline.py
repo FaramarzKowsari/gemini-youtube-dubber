@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -9,9 +10,12 @@ from typing import Callable
 
 from .chunking import build_precise_chunks, build_smart_chunks
 from .gemini_client import GeminiDubClient
-from .media import compose_dub_track, fit_audio_to_duration
+from .media import compose_dub_track
+from .timing_audio import fit_audio_without_slowdown
+from .timing_director import adapt_transcript_timing
 from .models import Transcript
 from .subtitles import write_srt
+from .tts_orchestrator import HybridChunkSynthesizer
 
 ProgressFn = Callable[[float, str], None]
 
@@ -25,6 +29,7 @@ class CloudDubResult:
     work_dir: Path
     source_segments: int = 0
     tts_requests: int = 0
+    fallback_chunks: int = 0
 
 
 def _progress(cb: ProgressFn | None, value: float, message: str) -> None:
@@ -33,7 +38,9 @@ def _progress(cb: ProgressFn | None, value: float, message: str) -> None:
 
 
 def _speaker_roles_and_voices(
-    speakers: list[str], primary_voice: str, secondary_voice: str | None
+    speakers: list[str],
+    primary_voice: str,
+    secondary_voice: str | None,
 ) -> tuple[dict[str, str], dict[str, str]]:
     distinct: list[str] = []
     for speaker in speakers:
@@ -56,6 +63,16 @@ def _speaker_roles_and_voices(
     }
 
 
+def _checkpoint_id(youtube_url: str, target_language: str) -> str:
+    payload = (
+        "v3\0"
+        + youtube_url.strip()
+        + "\0"
+        + target_language.strip().casefold()
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:24]
+
+
 def run_cloud_audio_dubbing(
     *,
     gemini: GeminiDubClient,
@@ -68,21 +85,29 @@ def run_cloud_audio_dubbing(
     progress: ProgressFn | None = None,
     smart_chunk_seconds: float = 60.0,
     smart_chunk_max_gap: float = 2.0,
+    tts_fallback_engine: str | None = None,
 ) -> CloudDubResult:
-    """Cloud phase: Gemini handles analysis/TTS; GitHub never downloads YouTube."""
+    """Cloud phase: Gemini analyzes/translates; speech can fail over without a new key."""
 
     if not youtube_url or not youtube_url.strip():
         raise ValueError("youtube_url is required")
 
-    root = output_root or Path(tempfile.mkdtemp(prefix="gemini_cloud_dubber_"))
+    root = output_root or Path(
+        tempfile.mkdtemp(prefix="gemini_cloud_dubber_")
+    )
     root.mkdir(parents=True, exist_ok=True)
 
     work = root / "work"
     out = root / "output"
+    checkpoints = root / "checkpoints"
     work.mkdir(exist_ok=True)
     out.mkdir(exist_ok=True)
+    checkpoints.mkdir(exist_ok=True)
 
     transcript_json = out / "transcript.json"
+    checkpoint_json = checkpoints / (
+        _checkpoint_id(youtube_url, target_language) + ".json"
+    )
 
     reuse_checkpoint = (
         os.getenv("GEMINI_REUSE_TRANSCRIPT_CHECKPOINT", "1")
@@ -92,20 +117,19 @@ def run_cloud_audio_dubbing(
     )
 
     transcript: Transcript
-
     if (
         reuse_checkpoint
-        and transcript_json.exists()
-        and transcript_json.stat().st_size > 20
+        and checkpoint_json.exists()
+        and checkpoint_json.stat().st_size > 20
     ):
         _progress(
             progress,
             0.05,
-            "Checkpoint found: reusing transcript/translation; "
-            "Gemini video analysis will NOT run again",
+            "Matching checkpoint found: reusing transcript/translation; "
+            "Gemini video analysis will not run again",
         )
         transcript = Transcript.model_validate(
-            json.loads(transcript_json.read_text(encoding="utf-8"))
+            json.loads(checkpoint_json.read_text(encoding="utf-8"))
         )
     else:
         _progress(
@@ -114,7 +138,10 @@ def run_cloud_audio_dubbing(
             "Starting Gemini GenerateContent video analysis",
         )
 
-        def _on_transcribe_wait(seconds: float, message: str) -> None:
+        def _on_transcribe_wait(
+            seconds: float,
+            message: str,
+        ) -> None:
             _progress(progress, 0.05, message)
 
         transcript = gemini.transcribe_youtube(
@@ -125,18 +152,16 @@ def run_cloud_audio_dubbing(
         if not transcript.segments:
             raise RuntimeError("No spoken dialogue was detected")
 
-        transcript_json.write_text(
-            json.dumps(
-                transcript.model_dump(),
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        payload = json.dumps(
+            transcript.model_dump(),
+            ensure_ascii=False,
+            indent=2,
         )
+        checkpoint_json.write_text(payload, encoding="utf-8")
         _progress(
             progress,
             0.16,
-            "Transcript checkpoint saved; later process retries can skip video analysis",
+            "Transcript checkpoint saved with URL/language fingerprint",
         )
 
     if not transcript.segments:
@@ -147,15 +172,38 @@ def run_cloud_audio_dubbing(
         seg.start = max(0.0, float(seg.start))
         seg.end = max(seg.start + 0.25, float(seg.end))
         valid_segments.append(seg)
-
     transcript.segments = valid_segments
 
-    transcript_json.write_text(
-        json.dumps(
-            transcript.model_dump(),
-            ensure_ascii=False,
-            indent=2,
-        ),
+    # Keep checkpoint as the faithful base translation. Timing adaptation is derived
+    # fresh from it, so repeated runs cannot progressively expand/compress the text.
+    base_payload = json.dumps(
+        transcript.model_dump(),
+        ensure_ascii=False,
+        indent=2,
+    )
+    checkpoint_json.write_text(base_payload, encoding="utf-8")
+
+    _progress(
+        progress,
+        0.165,
+        "Timing Director: matching translated text to original speaking slots",
+    )
+    transcript, timing_report = adapt_transcript_timing(
+        transcript,
+        gemini=gemini,
+        target_language=target_language,
+        progress=progress,
+    )
+
+    payload = json.dumps(
+        transcript.model_dump(),
+        ensure_ascii=False,
+        indent=2,
+    )
+    transcript_json.write_text(payload, encoding="utf-8")
+    timing_report_path = out / "timing_report.json"
+    timing_report_path.write_text(
+        json.dumps(timing_report.to_dict(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -180,17 +228,21 @@ def run_cloud_audio_dubbing(
         )
         engine_label = "Smart Chunk"
 
-        # Gemini TTS preview models can have very small free-tier request quotas.
-        # Adapt chunk duration upward until the job fits a safe request budget.
         request_budget = max(
             1,
-            int(os.getenv("GEMINI_TTS_REQUEST_BUDGET", "8")),
+            int(os.getenv("GEMINI_TTS_REQUEST_BUDGET", "6")),
         )
         original_request_count = len(chunks)
         adaptive_seconds = max(float(smart_chunk_seconds), 60.0)
 
-        while len(chunks) > request_budget and adaptive_seconds < 180.0:
-            adaptive_seconds = min(180.0, adaptive_seconds + 15.0)
+        while (
+            len(chunks) > request_budget
+            and adaptive_seconds < 180.0
+        ):
+            adaptive_seconds = min(
+                180.0,
+                adaptive_seconds + 15.0,
+            )
             candidate = build_smart_chunks(
                 transcript.segments,
                 speaker_roles,
@@ -204,8 +256,8 @@ def run_cloud_audio_dubbing(
             _progress(
                 progress,
                 0.17,
-                f"Free-tier TTS optimizer: {original_request_count} -> "
-                f"{len(chunks)} requests using up to "
+                f"Gemini TTS optimizer: {original_request_count} -> "
+                f"{len(chunks)} preferred Gemini requests using up to "
                 f"{adaptive_seconds:.0f}s smart chunks",
             )
     else:
@@ -215,13 +267,18 @@ def run_cloud_audio_dubbing(
         )
         engine_label = "Precise"
 
+    hybrid_tts = HybridChunkSynthesizer(
+        gemini,
+        fallback_engine=tts_fallback_engine,
+    )
+
     _progress(
         progress,
         0.18,
         f"{engine_label}: "
         f"{len(transcript.segments)} dialogue segments -> "
-        f"{len(chunks)} Gemini TTS requests · "
-        f"TTS models: {', '.join(gemini.tts_models)}",
+        f"{len(chunks)} speech chunks · Gemini preferred, "
+        f"{hybrid_tts.fallback_engine or 'no'} fallback",
     )
 
     chunk_audio: list[tuple[float, Path]] = []
@@ -231,18 +288,14 @@ def run_cloud_audio_dubbing(
         _progress(
             progress,
             0.20 + 0.62 * (idx - 1) / max(1, total_chunks),
-            f"TTS chunk {idx}/{total_chunks} · "
+            f"Speech chunk {idx}/{total_chunks} · "
             f"{len(chunk.segments)} lines · "
             f"{chunk.duration:.1f}s timeline span",
         )
 
         raw = work / f"tts_chunk_{idx:04d}_raw.wav"
         fitted = work / f"tts_chunk_{idx:04d}.wav"
-        prompt = chunk.tts_prompt(target_language)
-        chunk_voice_config = {
-            role: role_voices[role]
-            for role in chunk.roles
-        }
+        fallback_work = work / f"fallback_chunk_{idx:04d}"
 
         def _on_tts_wait(
             seconds: float,
@@ -253,29 +306,44 @@ def run_cloud_audio_dubbing(
         ) -> None:
             _progress(
                 progress,
-                0.20 + 0.62 * (_idx - 1) / max(1, _total),
+                0.20
+                + 0.62 * (_idx - 1) / max(1, _total),
                 f"{message} · chunk {_idx}/{_total}",
             )
 
-        gemini.synthesize_chunk(
-            prompt,
-            chunk_voice_config,
-            target_language,
-            raw,
+        hybrid_tts.synthesize(
+            chunk=chunk,
+            role_voices=role_voices,
+            target_language=target_language,
+            output_wav=raw,
+            work_dir=fallback_work,
             on_wait=_on_tts_wait,
         )
 
-        fit_audio_to_duration(
+        fit_result = fit_audio_without_slowdown(
             raw,
             fitted,
             chunk.duration,
         )
+        if fit_result.emergency_speedup:
+            _progress(
+                progress,
+                0.20 + 0.62 * idx / max(1, total_chunks),
+                f"Timing safeguard: chunk {idx} still required "
+                f"{fit_result.speed_factor:.2f}x emergency speed-up",
+            )
         chunk_audio.append((chunk.start, fitted))
 
     timeline_end = max(
         0.25,
-        max((seg.end for seg in transcript.segments), default=0.25),
-        max((chunk.end for chunk in chunks), default=0.25),
+        max(
+            (seg.end for seg in transcript.segments),
+            default=0.25,
+        ),
+        max(
+            (chunk.end for chunk in chunks),
+            default=0.25,
+        ),
     )
 
     _progress(
@@ -290,9 +358,10 @@ def run_cloud_audio_dubbing(
         out / "dubbed_audio.wav",
     )
 
+    stats = hybrid_tts.stats
     manifest_data = {
-        "format_version": 2,
-        "mode": "hybrid-cloud-generatecontent-free-tier-safe",
+        "format_version": 4,
+        "mode": "gemini-analysis-ai-timing-hybrid-tts",
         "youtube_url": youtube_url.strip(),
         "target_language": target_language,
         "primary_voice": primary_voice,
@@ -303,10 +372,29 @@ def run_cloud_audio_dubbing(
         ),
         "timeline_end_seconds": timeline_end,
         "source_segments": len(transcript.segments),
-        "tts_requests": len(chunks),
+        "speech_chunks": len(chunks),
+        "gemini_tts_chunks": stats.gemini_chunks,
+        "fallback_tts_chunks": stats.fallback_chunks,
+        "fallback_tts_engine": stats.fallback_engine,
         "transcribe_models": gemini.transcribe_models,
-        "tts_models": gemini.tts_models,
-        "tts_request_budget": int(os.getenv("GEMINI_TTS_REQUEST_BUDGET", "8")),
+        "gemini_tts_models": gemini.tts_models,
+        "gemini_tts_request_budget": int(
+            os.getenv("GEMINI_TTS_REQUEST_BUDGET", "6")
+        ),
+        "checkpoint_id": _checkpoint_id(
+            youtube_url,
+            target_language,
+        ),
+        "timing_director": {
+            "enabled": timing_report.enabled,
+            "used_ai": timing_report.used_ai,
+            "model": timing_report.model,
+            "occupancy": timing_report.occupancy,
+            "compressed_segments": timing_report.compressed_segments,
+            "expanded_segments": timing_report.expanded_segments,
+            "kept_segments": timing_report.kept_segments,
+            "report_file": "timing_report.json",
+        },
         "instructions": (
             "Download this artifact, then run "
             "FINALIZE_CLOUD_DUB_WINDOWS.bat on Windows "
@@ -338,4 +426,5 @@ def run_cloud_audio_dubbing(
         root,
         len(transcript.segments),
         len(chunks),
+        stats.fallback_chunks,
     )

@@ -48,7 +48,8 @@ class DubChunk:
             "Follow the cue timing approximately: preserve short pauses between lines and speaker turns.\n"
             "Speak ONLY the dialogue text after each colon. Do not read timestamps, speaker labels, emotion labels, or instructions aloud.\n"
             "Do not add, remove, summarize, translate again, or paraphrase any dialogue.\n"
-            "Keep delivery natural and cinematic rather than rushed.\n\n"
+            "Keep delivery natural and cinematic rather than rushed.\n"
+            "Maintain one steady natural speaking rate throughout; never stretch words or slow the voice to fill time. Use natural pauses between cues when needed.\n\n"
             "DUBBING CUES:\n" + "\n".join(lines)
         )
 

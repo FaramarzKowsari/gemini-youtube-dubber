@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1 - 2026-08-26
+
+- Added an AI Timing Director between translation and TTS.
+- Long translated lines are compressed semantically to fit their original speech slots without losing facts or meaning.
+- Short translated lines are expanded with semantically equivalent natural phrasing; the model is explicitly forbidden from inventing facts, examples, names, numbers, or claims.
+- Timing adaptation targets about 94% speech occupancy, leaving a small breathing/pause margin.
+- Added `timing_report.json` so every compress/expand/keep decision can be audited.
+- Short generated audio is now padded with silence instead of being slowed down, eliminating the most obvious slow-motion voice effect.
+- Long audio should need only a small speed correction after AI text adaptation; emergency larger corrections are surfaced in progress messages.
+- Timing adaptation is re-derived from the base transcript checkpoint on every run, preventing cumulative text drift.
+- Strengthened Gemini transcription prompt and Smart Chunk speech prompt to require a steady natural speaking rate.
+
 ## 0.2.2 - 2026-08-25
 
 - Added automatic retry/backoff to Gemini video transcription/translation, not only TTS.

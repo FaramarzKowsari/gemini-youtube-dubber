@@ -164,6 +164,7 @@ Requirements:
 - Identify speakers consistently (Speaker 1, Speaker 2, etc.).
 - Translate/adapt each segment into natural, spoken {target_language}, preserving meaning, tone, names, numbers, jokes, and technical terms.
 - Keep each translated segment concise enough to be spoken within its original time window.
+- Treat every timestamp duration as a dubbing slot and phrase the translation so it can be spoken at a steady natural rate inside that slot.
 - Do not add commentary, summaries inside segment text, censorship, or facts not present in the source.
 - Mark a simple emotion/style for each segment, such as neutral, warm, serious, excited, sad, angry, calm, or humorous.
 - Do not create segments for music-only or silence.
@@ -574,16 +575,21 @@ Requirements:
                     )
 
                     # Free-tier quota on one TTS model must not kill the dub.
-                    # Move immediately to the next officially supported free TTS model.
-                    if quota_or_permission and has_fallback:
-                        next_model = self.tts_models[model_index + 1]
-                        self._notify(
-                            on_wait,
-                            0,
-                            f"{model} quota/access limit reached; "
-                            f"switching TTS to {next_model}",
-                        )
-                        break
+                    # Move immediately to the next Gemini model when available.
+                    # Quota/access failures are not repaired by retrying the same final model.
+                    # Raise immediately so the hybrid speech orchestrator can continue
+                    # with its no-extra-key fallback instead of wasting several minutes.
+                    if quota_or_permission:
+                        if has_fallback:
+                            next_model = self.tts_models[model_index + 1]
+                            self._notify(
+                                on_wait,
+                                0,
+                                f"{model} quota/access limit reached; "
+                                f"switching TTS to {next_model}",
+                            )
+                            break
+                        raise
 
                     if not is_retryable_gemini_error(exc):
                         raise
