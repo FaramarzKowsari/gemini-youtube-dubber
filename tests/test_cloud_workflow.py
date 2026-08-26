@@ -41,8 +41,11 @@ def test_cloud_workflow_enables_ai_timing_director_and_measured_feedback():
     assert "DUB_TIMING_BATCH_SIZE" in text
     assert "DUB_TIMING_MAX_SPEEDUP: '1.06'" in text
     assert "DUB_TIMING_EXPAND_BELOW: '0.82'" in text
-    assert "DUB_TIMING_FEEDBACK_MAX_PASSES: '2'" in text
+    assert "DUB_TIMING_FEEDBACK_MAX_PASSES: '3'" in text
+    assert "EDGE_TTS_MAX_RETRIES: '0'" in text
+    assert "EDGE_TTS_NETWORK_RETRIES: '1'" in text
     assert "dubber/timing_feedback.py" in text
+
 
 def test_cloud_workflow_recovers_prior_transcript_and_uses_stable_analysis_fallback():
     text = WORKFLOW.read_text(encoding="utf-8")
@@ -54,4 +57,3 @@ def test_cloud_workflow_recovers_prior_transcript_and_uses_stable_analysis_fallb
     assert "--status success" in text
     assert "GEMINI_TRANSCRIBE_MODEL: gemini-2.5-flash" in text
     assert "gemini-2.5-flash-lite" in text
-

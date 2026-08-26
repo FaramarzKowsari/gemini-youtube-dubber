@@ -1,13 +1,41 @@
 from __future__ import annotations
 
 import os
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from .chunking import DubChunk
-from .fallback_tts import EdgeFallbackSynthesizer
+from .fallback_tts import EdgeFallbackSynthesizer, FallbackTTSUnavailable
 from .gemini_client import GeminiDubClient
 from .rate_limit import WaitCallback
+from .timing_audio import TimingSpeedLimitExceeded
+
+
+_TIMING_GUARD_RE = re.compile(
+    r"Natural-rate safety limit exceeded:\s*"
+    r"(?P<current>[0-9.]+)s audio needs\s*"
+    r"(?P<speed>[0-9.]+)x speed to fit\s*"
+    r"(?P<target>[0-9.]+)s,\s*above the\s*"
+    r"(?P<limit>[0-9.]+)x limit",
+    re.IGNORECASE,
+)
+
+
+def _timing_guard_from_fallback_error(
+    exc: BaseException,
+) -> TimingSpeedLimitExceeded | None:
+    """Recover a deterministic timing guard hidden inside a fallback wrapper."""
+    match = _TIMING_GUARD_RE.search(str(exc))
+    if not match:
+        return None
+    return TimingSpeedLimitExceeded(
+        current_seconds=float(match.group("current")),
+        target_seconds=float(match.group("target")),
+        speed_factor=float(match.group("speed")),
+        limit=float(match.group("limit")),
+    )
 
 
 @dataclass
@@ -42,9 +70,12 @@ class HybridChunkSynthesizer:
 
     def _edge(self) -> EdgeFallbackSynthesizer:
         if self._fallback is None:
+            # Keep Edge's own low-level retry loop disabled. A timing overflow is
+            # deterministic, so repeating the same text cannot fix it. Network-only
+            # retries are handled separately below.
             self._fallback = EdgeFallbackSynthesizer(
                 self.gemini.cache_dir,
-                max_retries=int(os.getenv("EDGE_TTS_MAX_RETRIES", "2")),
+                max_retries=int(os.getenv("EDGE_TTS_MAX_RETRIES", "0")),
             )
         return self._fallback
 
@@ -55,6 +86,56 @@ class HybridChunkSynthesizer:
     ) -> None:
         if on_wait:
             on_wait(0.0, message)
+
+    def _synthesize_edge(
+        self,
+        *,
+        chunk: DubChunk,
+        target_language: str,
+        output_wav: Path,
+        work_dir: Path,
+        on_wait: WaitCallback | None,
+    ) -> Path:
+        network_retries = max(
+            0,
+            min(3, int(os.getenv("EDGE_TTS_NETWORK_RETRIES", "1"))),
+        )
+
+        for attempt in range(network_retries + 1):
+            try:
+                return self._edge().synthesize_chunk(
+                    segments=chunk.segments,
+                    speaker_roles=chunk.speaker_roles,
+                    target_language=target_language,
+                    chunk_start=chunk.start,
+                    chunk_duration=chunk.duration,
+                    output_wav=output_wav,
+                    work_dir=work_dir,
+                )
+            except FallbackTTSUnavailable as exc:
+                timing_guard = _timing_guard_from_fallback_error(exc)
+                if timing_guard is not None:
+                    # Let the outer measured timing controller shorten the translated
+                    # text and re-synthesize. Never retry identical deterministic text.
+                    self._notify(
+                        on_wait,
+                        "Edge speech exceeded the natural-rate timing limit; "
+                        "returning the measured ratio to AI Timing Feedback",
+                    )
+                    raise timing_guard from exc
+
+                if attempt >= network_retries:
+                    raise
+
+                delay = 1.5 * (2**attempt)
+                self._notify(
+                    on_wait,
+                    f"Edge TTS network/service error; retrying in {delay:.1f}s "
+                    f"({attempt + 1}/{network_retries})",
+                )
+                time.sleep(delay)
+
+        raise RuntimeError("Edge TTS retry loop exited unexpectedly")
 
     def synthesize(
         self,
@@ -105,14 +186,12 @@ class HybridChunkSynthesizer:
             on_wait,
             "Generating speech with Edge Neural TTS fallback",
         )
-        result = self._edge().synthesize_chunk(
-            segments=chunk.segments,
-            speaker_roles=chunk.speaker_roles,
+        result = self._synthesize_edge(
+            chunk=chunk,
             target_language=target_language,
-            chunk_start=chunk.start,
-            chunk_duration=chunk.duration,
             output_wav=output_wav,
             work_dir=work_dir,
+            on_wait=on_wait,
         )
         self.stats.fallback_chunks += 1
         return result

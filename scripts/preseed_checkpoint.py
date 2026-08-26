@@ -26,10 +26,14 @@ def _youtube_identity(url: str) -> str:
 
 
 def _checkpoint_id(youtube_url: str, target_language: str) -> str:
+    # IMPORTANT: Keep this byte-for-byte identical to
+    # dubber.cloud_pipeline._checkpoint_id. v0.3.3 accidentally used the two
+    # visible characters "\\0" here while the pipeline used a real NUL byte,
+    # so a recovered artifact was ignored on attempt 1.
     payload = (
-        "v3\\0"
+        "v3\0"
         + youtube_url.strip()
-        + "\\0"
+        + "\0"
         + target_language.strip().casefold()
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()[:24]

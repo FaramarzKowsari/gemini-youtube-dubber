@@ -71,17 +71,22 @@ jobs:
       GEMINI_TTS_REQUEST_BUDGET: '4'
       GEMINI_TTS_MAX_RETRIES: '0'
       DUB_TTS_FALLBACK_ENGINE: edge
-      EDGE_TTS_MAX_RETRIES: '2'
+
+      # Edge deterministic timing overflow must escape immediately to AI timing
+      # feedback. Only genuine Edge network/service failures are retried here.
+      EDGE_TTS_MAX_RETRIES: '0'
+      EDGE_TTS_NETWORK_RETRIES: '1'
 
       # Pre-TTS semantic timing adaptation.
       DUB_TIMING_DIRECTOR: '1'
       DUB_TIMING_OCCUPANCY: '0.94'
       DUB_TIMING_BATCH_SIZE: '40'
 
-      # v0.3.2 measured closed-loop timing: synthesize -> measure -> rewrite -> retry.
+      # v0.3.4 measured closed-loop timing:
+      # synthesize -> measure -> rewrite -> retry, never rush beyond 1.06x.
       DUB_TIMING_MAX_SPEEDUP: '1.06'
       DUB_TIMING_EXPAND_BELOW: '0.82'
-      DUB_TIMING_FEEDBACK_MAX_PASSES: '2'
+      DUB_TIMING_FEEDBACK_MAX_PASSES: '3'
 
       GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
 
@@ -204,11 +209,12 @@ jobs:
 
           for ATTEMPT in 1 2; do
             echo "============================================================"
-            echo "Gemini YouTube Dubber v0.3.3 · attempt ${ATTEMPT}/2"
+            echo "Gemini YouTube Dubber v0.3.4 · attempt ${ATTEMPT}/2"
             echo "Analysis/translation: Gemini GenerateContent"
             echo "Preferred speech: Gemini TTS"
             echo "Automatic speech fallback: Edge Neural TTS"
             echo "Measured timing feedback: ON"
+            echo "Edge timing overflow -> AI text repair: ON"
             echo "Hard speech speed-up limit: ${DUB_TIMING_MAX_SPEEDUP}x"
             echo "Max AI timing feedback passes: $DUB_TIMING_FEEDBACK_MAX_PASSES"
             echo "Gemini preferred request budget: $GEMINI_TTS_REQUEST_BUDGET"
@@ -277,9 +283,10 @@ jobs:
           {
             echo "## Cloud dub package is ready"
             echo ""
-            echo "v0.3.2 measured every synthesized chunk."
-            echo "Overlong speech was rewritten and re-synthesized instead of being rushed."
-            echo "Short speech was safely expanded when possible; otherwise it stayed natural and was padded."
+            echo "v0.3.4 measures synthesized speech and feeds any Edge timing overflow back to the AI text controller."
+            echo "Overlong speech is rewritten and re-synthesized instead of being rushed."
+            echo "Short speech is safely expanded when possible; otherwise it stays natural and is padded."
+            echo "Recovered transcripts now use the same fingerprint as the main pipeline."
             echo "See timing_feedback.json for per-chunk measurements."
             echo ""
             echo "Download the cloud-dub-package artifact."
