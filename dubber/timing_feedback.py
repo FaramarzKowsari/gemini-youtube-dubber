@@ -141,7 +141,10 @@ def _feedback_prompt(
         items.append(
             {
                 "index": index,
-                "slot_seconds": round(segment.duration, 3),
+                "slot_seconds": round(
+                    chunk.duration if len(chunk.segments) == 1 else segment.duration,
+                    3,
+                ),
                 "speaker": segment.speaker,
                 "emotion": segment.emotion or "neutral",
                 "source_text": segment.source_text,

@@ -50,6 +50,8 @@ def test_cloud_workflow_enables_ai_timing_director_and_measured_feedback():
     assert "DUB_TTS_PRIMARY_ENGINE: edge" in text
     assert "DUB_SYNC_VAD_SNAP_SECONDS: '0.70'" in text
     assert "DUB_SYNC_MIN_SEGMENT_SECONDS: '2.5'" in text
+    assert "DUB_SYNC_MIN_PAUSE_SECONDS: '0.12'" in text
+    assert "DUB_SYNC_MAX_SILENCE_BORROW_SECONDS: '1.50'" in text
 
 
 def test_cloud_workflow_recovers_prior_transcript_and_uses_stable_analysis_fallback():

@@ -79,6 +79,8 @@ jobs:
       DUB_SYNC_MAX_CHARS: '180'
       DUB_SYNC_MIN_SEGMENT_SECONDS: '2.5'
       DUB_SYNC_VAD_SNAP_SECONDS: '0.70'
+      DUB_SYNC_MIN_PAUSE_SECONDS: '0.12'
+      DUB_SYNC_MAX_SILENCE_BORROW_SECONDS: '1.50'
 
       # Edge deterministic timing overflow must escape immediately to AI timing
       # feedback. Only genuine Edge network/service failures are retried here.
@@ -218,9 +220,9 @@ jobs:
 
           for ATTEMPT in 1; do
             echo "============================================================"
-            echo "Gemini YouTube Dubber v0.3.9 · attempt ${ATTEMPT}/1"
+            echo "Gemini YouTube Dubber v0.4.0 · attempt ${ATTEMPT}/1"
             echo "Analysis/translation: Gemini GenerateContent"
-            echo "Precision speech: neutral Edge Neural TTS, one timestamp-locked segment at a time"
+            echo "Precision speech: onset-locked Edge TTS with real-silence deadline borrowing"
             echo "Automatic speech fallback: Edge Neural TTS"
             echo "Measured timing feedback: ON"
             echo "Exact Edge timing guard -> AI text repair: ON"
@@ -292,7 +294,7 @@ jobs:
           {
             echo "## Cloud dub package is ready"
             echo ""
-            echo "v0.3.9 keeps the 1.10x natural-speed ceiling and uses adaptive AI compression through a fourth timing pass."
+            echo "v0.4.0 removes per-segment silence padding and lets speech borrow only real silence before the next original cue."
             echo "Overlong speech is rewritten and re-synthesized instead of being rushed."
             echo "Short speech is safely expanded when possible; otherwise it stays natural and is padded."
             echo "Recovered transcripts now use the same fingerprint as the main pipeline."

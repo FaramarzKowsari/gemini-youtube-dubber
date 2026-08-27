@@ -126,9 +126,43 @@ def build_smart_chunks(
     return chunks
 
 
-def build_precise_chunks(segments: list[Segment], speaker_roles: dict[str, str]) -> list[DubChunk]:
-    """One TTS request per original segment, kept as a compatibility/precision mode."""
-    return [
-        DubChunk(seg.start, seg.end, (seg,), speaker_roles)
-        for seg in segments
-    ]
+def build_precise_chunks(
+    segments: list[Segment],
+    speaker_roles: dict[str, str],
+    *,
+    min_pause_seconds: float = 0.12,
+    max_silence_borrow_seconds: float = 1.50,
+) -> list[DubChunk]:
+    """One onset-locked request per segment with real-silence deadline elasticity.
+
+    The segment start never moves. If the original timeline has a silence gap before
+    the next cue, the current dub may use part of that real silence instead of
+    deleting meaning or rushing the voice. A short pause is preserved before the
+    next cue, and borrowing is capped so long scene gaps remain silent.
+    """
+    min_pause = max(0.0, float(min_pause_seconds))
+    max_borrow = max(0.0, float(max_silence_borrow_seconds))
+
+    chunks: list[DubChunk] = []
+    for index, seg in enumerate(segments):
+        deadline = float(seg.end)
+
+        if index + 1 < len(segments):
+            next_start = float(segments[index + 1].start)
+            real_gap = max(0.0, next_start - float(seg.end))
+            borrow = max(
+                0.0,
+                min(max_borrow, real_gap - min_pause),
+            )
+            deadline = float(seg.end) + borrow
+
+        chunks.append(
+            DubChunk(
+                float(seg.start),
+                max(float(seg.end), deadline),
+                (seg,),
+                speaker_roles,
+            )
+        )
+
+    return chunks

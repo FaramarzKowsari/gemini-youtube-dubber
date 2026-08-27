@@ -318,7 +318,7 @@ class EdgeFallbackSynthesizer:
                         str(raw),
                     ]
                 )
-                fit_audio_without_slowdown(raw, output_wav, duration)
+                fit_audio_without_slowdown(raw, output_wav, duration, pad_short=False)
 
                 try:
                     self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -372,10 +372,19 @@ class EdgeFallbackSynthesizer:
         for index, segment in enumerate(segments, start=1):
             role = speaker_roles[segment.speaker]
             fitted = work_dir / f"edge_segment_{index:03d}.wav"
+            available_duration = max(
+                0.25,
+                (
+                    float(chunk_duration)
+                    - max(0.0, float(segment.start) - float(chunk_start))
+                    if len(segments) == 1
+                    else float(segment.end) - float(segment.start)
+                ),
+            )
             self._synthesize_segment(
                 text=segment.target_text,
                 voice=role_voices[role],
-                duration=max(0.25, segment.end - segment.start),
+                duration=available_duration,
                 output_wav=fitted,
                 work_dir=work_dir,
             )
@@ -385,6 +394,13 @@ class EdgeFallbackSynthesizer:
                     fitted,
                 )
             )
+
+        if len(segments) == 1:
+            # Precision sync: keep only the spoken waveform. The master timeline
+            # supplies real silence, so do not build a slot-length silence bed here.
+            output_wav.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(segment_audio[0][1], output_wav)
+            return output_wav
 
         compose_dub_track(
             max(0.25, float(chunk_duration)),

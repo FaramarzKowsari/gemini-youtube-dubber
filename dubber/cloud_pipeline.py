@@ -285,8 +285,14 @@ def run_cloud_audio_dubbing(
         chunks = build_precise_chunks(
             transcript.segments,
             speaker_roles,
+            min_pause_seconds=float(
+                os.getenv("DUB_SYNC_MIN_PAUSE_SECONDS", "0.12")
+            ),
+            max_silence_borrow_seconds=float(
+                os.getenv("DUB_SYNC_MAX_SILENCE_BORROW_SECONDS", "1.50")
+            ),
         )
-        engine_label = "Precise"
+        engine_label = "Onset-Locked Precise"
 
     hybrid_tts = HybridChunkSynthesizer(
         gemini,
@@ -389,6 +395,7 @@ def run_cloud_audio_dubbing(
                     "index": idx,
                     "start": float(segment.start),
                     "end": float(segment.end),
+                    "speech_deadline": float(chunk.end),
                     "speaker": segment.speaker,
                     "file": f"segments/{exported.name}",
                 }
