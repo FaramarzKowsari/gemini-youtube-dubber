@@ -41,7 +41,7 @@ def test_cloud_workflow_enables_ai_timing_director_and_measured_feedback():
     assert "DUB_TIMING_BATCH_SIZE" in text
     assert "DUB_TIMING_MAX_SPEEDUP: '1.10'" in text
     assert "DUB_TIMING_EXPAND_BELOW: '0.80'" in text
-    assert "DUB_TIMING_FEEDBACK_MAX_PASSES: '3'" in text
+    assert "DUB_TIMING_FEEDBACK_MAX_PASSES: '4'" in text
     assert "timeout-minutes: 45" in text
     assert "EDGE_TTS_MAX_RETRIES: '0'" in text
     assert "EDGE_TTS_NETWORK_RETRIES: '1'" in text

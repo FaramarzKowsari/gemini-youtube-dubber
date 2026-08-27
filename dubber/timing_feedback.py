@@ -102,9 +102,20 @@ def _feedback_prompt(
     ratio = max(0.001, actual_seconds / target_seconds)
 
     if action == "compress":
+        # Keep the natural-rate ceiling fixed. Instead, make later AI passes
+        # progressively more decisive when earlier rewrites still run long.
+        # Pass 1/2/3/4 safety multipliers: 0.97 / 0.94 / 0.91 / 0.88.
+        compression_safety = max(
+            0.88,
+            1.00 - 0.03 * max(1, int(pass_number)),
+        )
         requested_factor = min(
             0.97,
-            max(0.45, (target_seconds / max(actual_seconds, 0.25)) * 0.97),
+            max(
+                0.40,
+                (target_seconds / max(actual_seconds, 0.25))
+                * compression_safety,
+            ),
         )
         action_instruction = (
             f"The measured spoken-duration ratio is {ratio:.3f}. Rewrite the dialogue "
