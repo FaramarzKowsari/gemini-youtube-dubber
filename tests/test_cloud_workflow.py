@@ -39,9 +39,9 @@ def test_cloud_workflow_enables_ai_timing_director_and_measured_feedback():
     assert "DUB_TIMING_DIRECTOR" in text
     assert "DUB_TIMING_OCCUPANCY" in text
     assert "DUB_TIMING_BATCH_SIZE" in text
-    assert "DUB_TIMING_MAX_SPEEDUP: '1.06'" in text
-    assert "DUB_TIMING_EXPAND_BELOW: '0.90'" in text
-    assert "DUB_TIMING_FEEDBACK_MAX_PASSES: '2'" in text
+    assert "DUB_TIMING_MAX_SPEEDUP: '1.10'" in text
+    assert "DUB_TIMING_EXPAND_BELOW: '0.80'" in text
+    assert "DUB_TIMING_FEEDBACK_MAX_PASSES: '3'" in text
     assert "timeout-minutes: 45" in text
     assert "EDGE_TTS_MAX_RETRIES: '0'" in text
     assert "EDGE_TTS_NETWORK_RETRIES: '1'" in text
@@ -49,6 +49,7 @@ def test_cloud_workflow_enables_ai_timing_director_and_measured_feedback():
     assert "DUB_SYNC_MODE: segment_locked" in text
     assert "DUB_TTS_PRIMARY_ENGINE: edge" in text
     assert "DUB_SYNC_VAD_SNAP_SECONDS: '0.70'" in text
+    assert "DUB_SYNC_MIN_SEGMENT_SECONDS: '2.5'" in text
 
 
 def test_cloud_workflow_recovers_prior_transcript_and_uses_stable_analysis_fallback():
