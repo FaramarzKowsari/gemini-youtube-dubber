@@ -115,7 +115,15 @@ class HybridChunkSynthesizer:
                     output_wav=output_wav,
                     work_dir=work_dir,
                 )
+            except TimingSpeedLimitExceeded:
+                self._notify(
+                    on_wait,
+                    "Edge speech exceeded the natural-rate timing limit; "
+                    "returning the exact measured ratio to AI Timing Feedback",
+                )
+                raise
             except FallbackTTSUnavailable as exc:
+                # Backward compatibility for older wrapped/cache errors.
                 timing_guard = _timing_guard_from_fallback_error(exc)
                 if timing_guard is not None:
                     # Let the outer measured timing controller shorten the translated
@@ -196,5 +204,11 @@ class HybridChunkSynthesizer:
             work_dir=work_dir,
             on_wait=on_wait,
         )
+        if not output_wav.exists() or output_wav.stat().st_size <= 44:
+            raise RuntimeError(
+                "TTS contract violation: synthesis returned successfully but "
+                f"did not create a valid WAV at {output_wav}"
+            )
+
         self.stats.fallback_chunks += 1
         return result

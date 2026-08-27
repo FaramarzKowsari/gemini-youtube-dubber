@@ -218,12 +218,12 @@ jobs:
 
           for ATTEMPT in 1; do
             echo "============================================================"
-            echo "Gemini YouTube Dubber v0.3.7 · attempt ${ATTEMPT}/1"
+            echo "Gemini YouTube Dubber v0.3.8 · attempt ${ATTEMPT}/1"
             echo "Analysis/translation: Gemini GenerateContent"
             echo "Precision speech: neutral Edge Neural TTS, one timestamp-locked segment at a time"
             echo "Automatic speech fallback: Edge Neural TTS"
             echo "Measured timing feedback: ON"
-            echo "Edge timing overflow -> AI text repair: ON"
+            echo "Exact Edge timing guard -> AI text repair: ON"
             echo "Natural speech hard limit: ${DUB_TIMING_MAX_SPEEDUP}x"
             echo "Max AI timing feedback passes: $DUB_TIMING_FEEDBACK_MAX_PASSES"
             echo "Gemini preferred request budget: $GEMINI_TTS_REQUEST_BUDGET"
@@ -292,7 +292,7 @@ jobs:
           {
             echo "## Cloud dub package is ready"
             echo ""
-            echo "v0.3.4 measures synthesized speech and feeds any Edge timing overflow back to the AI text controller."
+            echo "v0.3.8 preserves exact Edge timing guards and rejects any successful TTS call that did not create a WAV."
             echo "Overlong speech is rewritten and re-synthesized instead of being rushed."
             echo "Short speech is safely expanded when possible; otherwise it stays natural and is padded."
             echo "Recovered transcripts now use the same fingerprint as the main pipeline."

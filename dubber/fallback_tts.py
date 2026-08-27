@@ -11,7 +11,7 @@ from pathlib import Path
 import edge_tts
 
 from .media import compose_dub_track, run_ffmpeg
-from .timing_audio import fit_audio_without_slowdown
+from .timing_audio import TimingSpeedLimitExceeded, fit_audio_without_slowdown
 from .models import Segment
 
 
@@ -326,6 +326,10 @@ class EdgeFallbackSynthesizer:
                 except OSError:
                     pass
                 return output_wav
+            except TimingSpeedLimitExceeded:
+                # Deterministic timing overflow carries exact floating-point
+                # measurements. Do not stringify/round it into a generic wrapper.
+                raise
             except Exception as exc:
                 last_error = exc
                 if attempt < self.max_retries:
