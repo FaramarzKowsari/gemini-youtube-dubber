@@ -5,6 +5,13 @@ from dataclasses import dataclass
 from .models import Segment
 
 
+def _restrained_emotion(value: str) -> str:
+    raw = (value or "neutral").strip().casefold()
+    if raw in {"sad", "angry", "serious"}:
+        return "subtle, restrained, serious"
+    return "neutral, calm, restrained"
+
+
 @dataclass(frozen=True)
 class DubChunk:
     """A group of transcript segments synthesized in one Gemini TTS request."""
@@ -37,7 +44,7 @@ class DubChunk:
             rel_start = max(0.0, seg.start - self.start)
             rel_end = max(rel_start + 0.01, seg.end - self.start)
             role = self.speaker_roles[seg.speaker]
-            emotion = (seg.emotion or "natural").strip()
+            emotion = _restrained_emotion(seg.emotion)
             lines.append(
                 f"[{rel_start:05.2f}-{rel_end:05.2f}] {role} ({emotion}): {seg.target_text.strip()}"
             )
@@ -48,8 +55,9 @@ class DubChunk:
             "Follow the cue timing approximately: preserve short pauses between lines and speaker turns.\n"
             "Speak ONLY the dialogue text after each colon. Do not read timestamps, speaker labels, emotion labels, or instructions aloud.\n"
             "Do not add, remove, summarize, translate again, or paraphrase any dialogue.\n"
-            "Keep delivery natural and cinematic rather than rushed.\n"
-            "Maintain one steady natural speaking rate throughout; never stretch words or slow the voice to fill time. Use natural pauses between cues when needed.\n\n"
+            "Use a neutral, calm, restrained documentary/instructional delivery.\n"
+            "Never sound theatrical, playful, sarcastic, sing-song, exaggerated, or performative.\n"
+            "Maintain one steady natural speaking rate throughout; never stretch words or slow the voice to fill time. Use only brief natural pauses.\n\n"
             "DUBBING CUES:\n" + "\n".join(lines)
         )
 

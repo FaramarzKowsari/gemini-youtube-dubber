@@ -72,6 +72,13 @@ jobs:
       GEMINI_TTS_MAX_RETRIES: '0'
       DUB_TTS_FALLBACK_ENGINE: edge
 
+      # v0.3.6 exact sync: neutral Edge speech is generated one segment at a time.
+      DUB_TTS_PRIMARY_ENGINE: edge
+      DUB_SYNC_MODE: segment_locked
+      DUB_SYNC_MAX_SEGMENT_SECONDS: '10'
+      DUB_SYNC_MAX_CHARS: '180'
+      DUB_SYNC_VAD_SNAP_SECONDS: '0.70'
+
       # Edge deterministic timing overflow must escape immediately to AI timing
       # feedback. Only genuine Edge network/service failures are retried here.
       EDGE_TTS_MAX_RETRIES: '0'
@@ -79,14 +86,14 @@ jobs:
 
       # Pre-TTS semantic timing adaptation.
       DUB_TIMING_DIRECTOR: '1'
-      DUB_TIMING_OCCUPANCY: '0.94'
+      DUB_TIMING_OCCUPANCY: '0.97'
       DUB_TIMING_BATCH_SIZE: '40'
 
       # v0.3.4 measured closed-loop timing:
       # synthesize -> measure -> rewrite -> retry, never rush beyond 1.06x.
       DUB_TIMING_MAX_SPEEDUP: '1.06'
-      DUB_TIMING_EXPAND_BELOW: '0.75'
-      DUB_TIMING_FEEDBACK_MAX_PASSES: '3'
+      DUB_TIMING_EXPAND_BELOW: '0.90'
+      DUB_TIMING_FEEDBACK_MAX_PASSES: '2'
 
       GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
 
@@ -127,6 +134,7 @@ jobs:
             dubber/timing_audio.py \
             dubber/timing_director.py \
             dubber/timing_feedback.py \
+            dubber/sync_timeline.py \
             dubber/cloud_pipeline.py \
             scripts/preseed_checkpoint.py \
             cloud_cli.py
@@ -209,9 +217,9 @@ jobs:
 
           for ATTEMPT in 1 2; do
             echo "============================================================"
-            echo "Gemini YouTube Dubber v0.3.5 · attempt ${ATTEMPT}/2"
+            echo "Gemini YouTube Dubber v0.3.6 · attempt ${ATTEMPT}/2"
             echo "Analysis/translation: Gemini GenerateContent"
-            echo "Preferred speech: Gemini TTS"
+            echo "Precision speech: neutral Edge Neural TTS, one timestamp-locked segment at a time"
             echo "Automatic speech fallback: Edge Neural TTS"
             echo "Measured timing feedback: ON"
             echo "Edge timing overflow -> AI text repair: ON"

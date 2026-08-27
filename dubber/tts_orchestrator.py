@@ -64,8 +64,11 @@ class HybridChunkSynthesizer:
             if fallback_engine is not None
             else os.getenv("DUB_TTS_FALLBACK_ENGINE", "edge")
         ).strip().lower()
+        self.primary_engine = os.getenv("DUB_TTS_PRIMARY_ENGINE", "gemini").strip().lower()
+        if self.primary_engine not in {"gemini", "edge"}:
+            raise ValueError(f"Unsupported DUB_TTS_PRIMARY_ENGINE: {self.primary_engine}")
         self.stats = TTSStats(fallback_engine=self.fallback_engine)
-        self._force_fallback = False
+        self._force_fallback = self.primary_engine == "edge"
         self._fallback: EdgeFallbackSynthesizer | None = None
 
     def _edge(self) -> EdgeFallbackSynthesizer:

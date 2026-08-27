@@ -44,6 +44,7 @@ def fit_audio_without_slowdown(
     *,
     micro_speedup_limit: float = 1.06,
     hard_speedup_limit: float | None = 1.10,
+    pad_short: bool = True,
 ) -> NaturalFitResult:
     """Fit audio to a slot without slowing speech or silently over-speeding it.
 
@@ -57,16 +58,25 @@ def fit_audio_without_slowdown(
     current = max(0.001, probe_duration(input_wav))
 
     if current <= target_seconds:
+        if pad_short:
+            filters = (
+                "aresample=24000,"
+                "aformat=sample_fmts=s16:channel_layouts=mono,"
+                f"apad=pad_dur={target_seconds:.6f},"
+                f"atrim=duration={target_seconds:.6f}"
+            )
+        else:
+            # Segment-locked sync: the master timeline supplies silence between
+            # absolute cue starts. Do not double-count silence inside each WAV.
+            filters = (
+                "aresample=24000,"
+                "aformat=sample_fmts=s16:channel_layouts=mono"
+            )
+
         run_ffmpeg(
             [
                 "-i", str(input_wav),
-                "-filter:a",
-                (
-                    "aresample=24000,"
-                    "aformat=sample_fmts=s16:channel_layouts=mono,"
-                    f"apad=pad_dur={target_seconds:.6f},"
-                    f"atrim=duration={target_seconds:.6f}"
-                ),
+                "-filter:a", filters,
                 "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le",
                 str(output_wav),
             ]
@@ -75,7 +85,7 @@ def fit_audio_without_slowdown(
             input_seconds=current,
             target_seconds=target_seconds,
             speed_factor=1.0,
-            padded=True,
+            padded=bool(pad_short),
             emergency_speedup=False,
         )
 

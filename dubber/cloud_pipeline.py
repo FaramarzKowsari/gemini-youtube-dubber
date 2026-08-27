@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ from .timing_director import adapt_transcript_timing
 from .timing_feedback import synthesize_with_timing_feedback
 from .models import Transcript
 from .subtitles import write_srt
+from .sync_timeline import subdivide_transcript_for_sync
 from .tts_orchestrator import HybridChunkSynthesizer
 
 ProgressFn = Callable[[float, str], None]
@@ -188,6 +190,19 @@ def run_cloud_audio_dubbing(
         encoding="utf-8",
     )
 
+    sync_mode = os.getenv("DUB_SYNC_MODE", "segment_locked").strip().lower()
+    if sync_mode == "segment_locked":
+        transcript = subdivide_transcript_for_sync(
+            transcript,
+            max_segment_seconds=float(os.getenv("DUB_SYNC_MAX_SEGMENT_SECONDS", "10")),
+            max_chars=int(os.getenv("DUB_SYNC_MAX_CHARS", "180")),
+        )
+        _progress(
+            progress,
+            0.164,
+            f"Segment-lock sync: {len(transcript.segments)} timestamp-locked speech units",
+        )
+
     _progress(
         progress,
         0.165,
@@ -221,6 +236,9 @@ def run_cloud_audio_dubbing(
         primary_voice,
         secondary_voice,
     )
+
+    if sync_mode == "segment_locked":
+        smart_chunk_seconds = 0.0
 
     if smart_chunk_seconds and smart_chunk_seconds > 0:
         chunks = build_smart_chunks(
@@ -290,6 +308,10 @@ def run_cloud_audio_dubbing(
 
     chunk_audio: list[tuple[float, Path]] = []
     timing_feedback_records: list[dict] = []
+    sync_timeline_records: list[dict] = []
+    segment_export_dir = out / "segments"
+    if sync_mode == "segment_locked":
+        segment_export_dir.mkdir(parents=True, exist_ok=True)
     total_chunks = len(chunks)
 
     for idx, chunk in enumerate(chunks, start=1):
@@ -354,8 +376,23 @@ def run_cloud_audio_dubbing(
             chunk.duration,
             micro_speedup_limit=max_speedup,
             hard_speedup_limit=max_speedup,
+            pad_short=sync_mode != "segment_locked",
         )
         chunk_audio.append((chunk.start, fitted))
+
+        if sync_mode == "segment_locked":
+            exported = segment_export_dir / f"segment_{idx:04d}.wav"
+            shutil.copy2(fitted, exported)
+            segment = chunk.segments[0]
+            sync_timeline_records.append(
+                {
+                    "index": idx,
+                    "start": float(segment.start),
+                    "end": float(segment.end),
+                    "speaker": segment.speaker,
+                    "file": f"segments/{exported.name}",
+                }
+            )
 
         record = {
             "chunk": idx,
@@ -394,6 +431,16 @@ def run_cloud_audio_dubbing(
         encoding="utf-8",
     )
 
+    if sync_mode == "segment_locked":
+        (out / "sync_timeline.json").write_text(
+            json.dumps(
+                {"mode": "segment_locked", "segments": sync_timeline_records},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
     timeline_end = max(
         0.25,
         max(
@@ -423,8 +470,8 @@ def run_cloud_audio_dubbing(
     feedback_chunks = sum(1 for item in timing_feedback_records if item["passes"] > 0)
 
     manifest_data = {
-        "format_version": 6,
-        "mode": "gemini-analysis-closed-loop-timing-hybrid-tts",
+        "format_version": 7,
+        "mode": "segment-locked-sync" if sync_mode == "segment_locked" else "gemini-analysis-closed-loop-timing-hybrid-tts",
         "youtube_url": youtube_url.strip(),
         "target_language": target_language,
         "primary_voice": primary_voice,
@@ -449,6 +496,11 @@ def run_cloud_audio_dubbing(
             target_language,
         ),
         "base_transcript_file": "base_transcript.json",
+        "sync": {
+            "mode": sync_mode,
+            "segment_timeline_file": "sync_timeline.json" if sync_mode == "segment_locked" else "",
+            "vad_snap_seconds": float(os.getenv("DUB_SYNC_VAD_SNAP_SECONDS", "0.70")),
+        },
         "timing_director": {
             "enabled": timing_report.enabled,
             "used_ai": timing_report.used_ai,

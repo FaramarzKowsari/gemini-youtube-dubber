@@ -16,6 +16,7 @@ from dubber.media import (
     probe_duration,
     run_ffmpeg,
 )
+from dubber.sync_timeline import detect_speech_onsets, snap_start_to_speech
 
 
 def _select_artifact() -> Path:
@@ -60,6 +61,7 @@ def _locate_package(root: Path):
         audio,
         srt if srt.exists() else None,
         transcript if transcript.exists() else None,
+        package_dir,
     )
 
 
@@ -90,7 +92,7 @@ def main() -> int:
             package_root = artifact
             default_parent = artifact
 
-        manifest_path, dub_audio, srt, transcript = _locate_package(package_root)
+        manifest_path, dub_audio, srt, transcript, package_dir = _locate_package(package_root)
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         youtube_url = str(manifest.get("youtube_url") or "").strip()
         if not youtube_url:
@@ -103,17 +105,56 @@ def main() -> int:
         video = download_youtube(youtube_url, work)
         duration = probe_duration(video)
 
-        print("Padding the cloud dub track to the exact video duration...", flush=True)
+        sync_info = manifest.get("sync") or {}
+        sync_timeline_file = str(sync_info.get("segment_timeline_file") or "").strip()
+        original = None
         padded_dub = work / "dubbed_audio_full.wav"
-        run_ffmpeg([
-            "-i", str(dub_audio),
-            "-filter:a",
-            f"apad=pad_dur={duration:.6f},atrim=duration={duration:.6f}",
-            "-ac", "2",
-            "-ar", "48000",
-            "-c:a", "pcm_s16le",
-            str(padded_dub),
-        ])
+
+        if sync_timeline_file and (package_dir / sync_timeline_file).exists():
+            print("Rebuilding segment-locked dub against original speech onsets...", flush=True)
+            original = extract_original_audio(video, work / "original_sync.wav")
+            onsets = detect_speech_onsets(original)
+            tolerance = float(sync_info.get("vad_snap_seconds") or 0.70)
+            data = json.loads((package_dir / sync_timeline_file).read_text(encoding="utf-8"))
+            segment_audio = []
+            snap_report = []
+            for item in data.get("segments", []):
+                wav = package_dir / str(item.get("file") or "")
+                if not wav.exists():
+                    continue
+                original_start = float(item.get("start", 0.0))
+                snapped_start = snap_start_to_speech(
+                    original_start,
+                    onsets,
+                    tolerance_seconds=tolerance,
+                )
+                segment_audio.append((snapped_start, wav))
+                snap_report.append(
+                    {
+                        "index": item.get("index"),
+                        "original_start": original_start,
+                        "snapped_start": snapped_start,
+                        "delta": snapped_start - original_start,
+                    }
+                )
+            if not segment_audio:
+                raise RuntimeError("Segment-lock package contains no usable segment WAV files")
+            compose_dub_track(duration, segment_audio, padded_dub)
+            (default_parent / "dubbed_video_final_sync_report.json").write_text(
+                json.dumps(snap_report, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        else:
+            print("Padding legacy cloud dub track to the exact video duration...", flush=True)
+            run_ffmpeg([
+                "-i", str(dub_audio),
+                "-filter:a",
+                f"apad=pad_dur={duration:.6f},atrim=duration={duration:.6f}",
+                "-ac", "2",
+                "-ar", "48000",
+                "-c:a", "pcm_s16le",
+                str(padded_dub),
+            ])
 
         audio_for_mux = padded_dub
         original_percent = max(
@@ -124,7 +165,8 @@ def main() -> int:
                 f"Mixing {original_percent}% of the original soundtrack under the dub...",
                 flush=True,
             )
-            original = extract_original_audio(video, work / "original.wav")
+            if original is None:
+                original = extract_original_audio(video, work / "original.wav")
             mixed = work / "mixed_audio.wav"
             gain_db = 20 * math.log10(max(0.01, original_percent / 100.0))
             audio_for_mux = compose_dub_track(
