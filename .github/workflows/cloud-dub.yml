@@ -222,9 +222,12 @@ jobs:
 
           LAST_STATUS=1
 
-          for ATTEMPT in 1; do
+          # A persistent Gemini capacity spike can outlast per-call retries. Restart
+          # the pipeline a few times in the same job so Timing Director gets a fresh
+          # chance while transcript/TTS caches and checkpoints remain available.
+          for ATTEMPT in 1 2 3; do
             echo "============================================================"
-            echo "Gemini YouTube Dubber v0.5.0 · attempt ${ATTEMPT}/1"
+            echo "Gemini YouTube Dubber v0.5.0 · attempt ${ATTEMPT}/3"
             echo "Analysis/translation: Gemini GenerateContent"
             echo "Precision speech: onset-locked Edge TTS with real-silence deadline borrowing"
             echo "Automatic speech fallback: Edge Neural TTS"
@@ -253,13 +256,13 @@ jobs:
               exit 0
             fi
 
-            if [ "$ATTEMPT" -lt 1 ]; then
-              echo "::warning::Attempt failed with code ${LAST_STATUS}; retrying in 10s. Matching transcript and speech cache will be reused."
-              sleep 10
+            if [ "$ATTEMPT" -lt 3 ]; then
+              echo "::warning::Attempt ${ATTEMPT}/3 failed with code ${LAST_STATUS}; cooling down 180s before a fresh Timing Director attempt. Matching transcript and speech cache will be reused."
+              sleep 180
             fi
           done
 
-          echo "::error::Cloud Dub failed after its bounded process attempt."
+          echo "::error::Cloud Dub failed after 3 bounded process attempts."
           exit "$LAST_STATUS"
 
       - name: Save reusable speech and transcript cache
