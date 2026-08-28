@@ -17,7 +17,7 @@ from .timing_director import adapt_transcript_timing
 from .timing_feedback import synthesize_with_timing_feedback
 from .models import Transcript
 from .subtitles import write_srt
-from .sync_timeline import subdivide_transcript_for_sync
+from .sync_timeline import merge_semantic_continuations
 from .tts_orchestrator import HybridChunkSynthesizer
 
 ProgressFn = Callable[[float, str], None]
@@ -192,11 +192,8 @@ def run_cloud_audio_dubbing(
 
     sync_mode = os.getenv("DUB_SYNC_MODE", "segment_locked").strip().lower()
     if sync_mode == "segment_locked":
-        transcript = subdivide_transcript_for_sync(
-            transcript,
-            max_segment_seconds=float(os.getenv("DUB_SYNC_MAX_SEGMENT_SECONDS", "10")),
-            max_chars=int(os.getenv("DUB_SYNC_MAX_CHARS", "180")),
-        )
+        # Genuine source utterances, not arbitrary text subdivisions, own timing.
+        transcript = merge_semantic_continuations(transcript)
         _progress(
             progress,
             0.164,
@@ -374,6 +371,7 @@ def run_cloud_audio_dubbing(
             max_speedup=max_speedup,
             expand_below=expand_below,
             max_passes=feedback_max_passes,
+            expand_short=False,
         )
 
         fit_result = fit_audio_without_slowdown(

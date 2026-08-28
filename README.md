@@ -4,7 +4,7 @@ Gemini YouTube Dubber turns a public YouTube video or your own video file into a
 
 ## AI Timing Director — v0.3.1
 
-Before speech synthesis, Gemini now performs a second, timing-aware dialogue adaptation pass. Every translated segment is given its original start/end time, source dialogue, initial translation, speaker, emotion, and target speech duration. If the translation would be too long at a normal speaking rate, Gemini compresses the wording while preserving the meaning. If it would be too short, Gemini expands only through semantically equivalent natural phrasing and is explicitly forbidden from inventing facts.
+Before speech synthesis, Gemini performs timing-aware dialogue adaptation only when wording is too long at a natural speaking rate. Short faithful speech is accepted unchanged and the master timeline supplies the remaining silence; it is never sent to Gemini merely to fill a slot. Source-timed utterances remain intact, while contiguous same-speaker clauses may be conservatively merged when the preceding source text is incomplete.
 
 The audio stage also no longer slows a short spoken clip just to fill an empty slot. Short speech stays at its natural rate and the remainder is padded with silence. This removes the previous "sometimes very fast, sometimes very slow" effect caused by forcing every generated WAV to the exact duration with unrestricted time stretching.
 

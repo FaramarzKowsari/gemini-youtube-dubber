@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
@@ -67,6 +69,35 @@ class TimingFeedbackResult:
 
 class TimingConvergenceError(RuntimeError):
     """Raised instead of producing audibly rushed dialogue."""
+
+
+def is_transient_timing_error(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    signals = (
+        "429", "502", "503", "504", "resource_exhausted", "resource exhausted",
+        "rate limit", "rate_limit", "unavailable", "high demand", "timeout",
+        "timed out", "connection reset", "connectionreset", "connection error",
+        "connectionerror", "server disconnected", "remote protocol", "broken pipe",
+        "temporarily unavailable", "errno 104",
+    )
+    return any(signal in text for signal in signals)
+
+
+def _rewrite_with_retry(*args, sleep=time.sleep, jitter=random.uniform, **kwargs):
+    """Retry only transient provider failures with bounded exponential backoff."""
+    rounds = max(1, min(5, int(os.getenv("DUB_TIMING_AI_RETRY_ROUNDS", "3"))))
+    base = max(0.0, min(120.0, float(os.getenv("DUB_TIMING_AI_RETRY_BASE_SECONDS", "20"))))
+    progress = kwargs.get("progress")
+    for attempt in range(rounds):
+        try:
+            return _rewrite_chunk(*args, **kwargs)
+        except Exception as exc:
+            if not is_transient_timing_error(exc) or attempt + 1 >= rounds:
+                raise
+            delay = min(120.0, base * (2 ** attempt))
+            delay += jitter(0.0, min(2.0, delay * 0.1))
+            _notify(progress, 0.0, f"Timing provider temporarily unavailable; retrying in {delay:.1f}s ({attempt + 2}/{rounds})")
+            sleep(delay)
 
 
 def _notify(progress: ProgressFn | None, value: float, message: str) -> None:
@@ -263,13 +294,15 @@ def synthesize_with_timing_feedback(
     max_speedup: float | None = None,
     expand_below: float | None = None,
     max_passes: int | None = None,
+    expand_short: bool = False,
 ) -> TimingFeedbackResult:
     """Synthesize, measure, rewrite, and re-synthesize until timing is natural.
 
     Overlong audio is never accepted above `max_speedup`. If a lower-level TTS engine
     itself refuses an unsafe speed-up (for example Edge per-segment fitting), that
     measured ratio is fed back to the AI before trying again. Short audio may be
-    expanded, but if safe expansion cannot converge it is padded later, never slowed.
+    accepted unchanged by default; the master timeline supplies remaining silence.
+    Legacy callers may explicitly set ``expand_short=True``.
     """
     max_speedup = max(
         1.0,
@@ -328,6 +361,8 @@ def synthesize_with_timing_feedback(
             max_speedup=max_speedup,
             expand_below=expand_below,
         )
+        if action == "expand" and not expand_short:
+            action = "keep"
         if action == "keep":
             break
 
@@ -343,7 +378,7 @@ def synthesize_with_timing_feedback(
         pass_number = len(adjustments) + 1
         ratio_before = actual_seconds / max(0.25, chunk.duration)
         try:
-            changed, model = _rewrite_chunk(
+            changed, model = _rewrite_with_retry(
                 chunk,
                 gemini=gemini,
                 target_language=target_language,
@@ -389,7 +424,7 @@ def synthesize_with_timing_feedback(
         )
 
     accepted_padding = final_ratio < expand_below
-    converged = expand_below <= final_ratio <= max_speedup
+    converged = final_ratio <= max_speedup
     return TimingFeedbackResult(
         initial_seconds=initial_seconds or actual_seconds,
         final_seconds=actual_seconds,

@@ -97,6 +97,8 @@ jobs:
       DUB_TIMING_MAX_SPEEDUP: '1.10'
       DUB_TIMING_EXPAND_BELOW: '0.80'
       DUB_TIMING_FEEDBACK_MAX_PASSES: '4'
+      DUB_TIMING_AI_RETRY_ROUNDS: '3'
+      DUB_TIMING_AI_RETRY_BASE_SECONDS: '20'
 
       GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
 
@@ -220,7 +222,7 @@ jobs:
 
           for ATTEMPT in 1; do
             echo "============================================================"
-            echo "Gemini YouTube Dubber v0.4.0 · attempt ${ATTEMPT}/1"
+            echo "Gemini YouTube Dubber v0.5.0 · attempt ${ATTEMPT}/1"
             echo "Analysis/translation: Gemini GenerateContent"
             echo "Precision speech: onset-locked Edge TTS with real-silence deadline borrowing"
             echo "Automatic speech fallback: Edge Neural TTS"
@@ -294,9 +296,9 @@ jobs:
           {
             echo "## Cloud dub package is ready"
             echo ""
-            echo "v0.4.0 removes per-segment silence padding and lets speech borrow only real silence before the next original cue."
+            echo "v0.5.0 uses semantic source timing units, no per-segment padding, and bounded transient Gemini retries."
             echo "Overlong speech is rewritten and re-synthesized instead of being rushed."
-            echo "Short speech is safely expanded when possible; otherwise it stays natural and is padded."
+            echo "Short speech is accepted unchanged; the master timeline supplies silence."
             echo "Recovered transcripts now use the same fingerprint as the main pipeline."
             echo "See timing_feedback.json for per-chunk measurements."
             echo ""

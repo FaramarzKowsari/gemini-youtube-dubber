@@ -10,10 +10,38 @@ from .media import ffmpeg_exe
 from .models import Segment, Transcript
 
 _SPLIT_RE = re.compile(r"(?<=[.!?؟])\s+|(?<=[؛;])\s+")
+_TERMINAL_RE = re.compile(r'[.!?؟]["\')\]]?$')
 
 
 def _normalize(text: str) -> str:
     return " ".join((text or "").split()).strip()
+
+
+def merge_semantic_continuations(
+    transcript: Transcript, *, max_gap_seconds: float = 0.05
+) -> Transcript:
+    """Merge contiguous same-speaker cues that clearly continue one sentence."""
+    result = transcript.model_copy(deep=True)
+    merged: list[Segment] = []
+    for original in result.segments:
+        current = original.model_copy(deep=True)
+        if merged:
+            previous = merged[-1]
+            gap = float(current.start) - float(previous.end)
+            incomplete = not _TERMINAL_RE.search(_normalize(previous.source_text))
+            if (-0.01 <= gap <= max(0.0, float(max_gap_seconds))
+                    and previous.speaker == current.speaker and incomplete):
+                merged[-1] = Segment(
+                    start=float(previous.start), end=float(current.end),
+                    speaker=previous.speaker,
+                    source_text=f"{previous.source_text.rstrip()} {current.source_text.lstrip()}".strip(),
+                    target_text=f"{previous.target_text.rstrip()} {current.target_text.lstrip()}".strip(),
+                    emotion=previous.emotion or current.emotion or "neutral",
+                )
+                continue
+        merged.append(current)
+    result.segments = merged
+    return result
 
 
 def _split_to_count(text: str, count: int) -> list[str]:

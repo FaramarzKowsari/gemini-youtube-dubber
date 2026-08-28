@@ -51,7 +51,7 @@ def _transcript():
     )
 
 
-def test_timing_director_compresses_and_expands_without_mutating_source(monkeypatch):
+def test_timing_director_compresses_but_does_not_expand_or_mutate_source(monkeypatch):
     monkeypatch.setenv("DUB_TIMING_DIRECTOR", "1")
     original = _transcript()
     adapted, report = adapt_transcript_timing(
@@ -63,11 +63,12 @@ def test_timing_director_compresses_and_expands_without_mutating_source(monkeypa
     assert original.segments[0].target_text != adapted.segments[0].target_text
     assert original.segments[1].target_text == "بله."
     assert report.compressed_segments == 1
-    assert report.expanded_segments == 1
+    assert adapted.segments[1].target_text == "بله."
+    assert report.expanded_segments == 0
     assert report.used_ai
 
 
-def test_prompt_forbids_new_facts_when_expanding():
+def test_prompt_forbids_expanding_short_speech():
     prompt = _build_prompt(target_language="Persian", items=[], occupancy=0.94)
-    assert "Never invent a new fact" in prompt
+    assert "Never expand a translation merely to fill its slot" in prompt
     assert "constant perceived speaking speed" in prompt
