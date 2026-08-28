@@ -61,7 +61,7 @@ jobs:
       GEMINI_DUBBER_CACHE_DIR: .tts-cache
 
       GEMINI_TRANSCRIBE_MODEL: gemini-2.5-flash
-      GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash-lite,gemini-3.7-flash
+      GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash-lite,gemini-3.7-flash
       GEMINI_HTTP_TIMEOUT_MS: '120000'
       GEMINI_TRANSCRIBE_MAX_RETRIES: '0'
 
@@ -165,7 +165,6 @@ jobs:
           set +e
           mkdir -p .prior-cloud-dubs
 
-          # A real cache checkpoint wins immediately.
           python scripts/preseed_checkpoint.py \
             --youtube-url "$YOUTUBE_URL" \
             --target-language "$TARGET_LANGUAGE" \
@@ -222,9 +221,6 @@ jobs:
 
           LAST_STATUS=1
 
-          # A persistent Gemini capacity spike can outlast per-call retries. Restart
-          # the pipeline a few times in the same job so Timing Director gets a fresh
-          # chance while transcript/TTS caches and checkpoints remain available.
           for ATTEMPT in 1 2 3; do
             echo "============================================================"
             echo "Gemini YouTube Dubber v0.5.0 · attempt ${ATTEMPT}/3"
