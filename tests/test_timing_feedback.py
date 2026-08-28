@@ -133,10 +133,26 @@ def test_short_audio_can_expand_but_never_needs_slowdown(monkeypatch, tmp_path: 
         target_language="Persian",
         expand_below=0.72,
         max_passes=1,
+        expand_short=True,
     )
 
     assert result.passes == 1
     assert result.final_ratio == pytest.approx(0.775)
+    assert result.converged
+
+
+def test_short_audio_is_accepted_without_ai_expansion(monkeypatch, tmp_path: Path):
+    chunk = _chunk("کوتاه")
+    gemini = _Gemini([])
+    monkeypatch.setattr(timing_feedback, "probe_duration", lambda _: 0.8)
+    result = timing_feedback.synthesize_with_timing_feedback(
+        chunk=chunk, output_wav=tmp_path / "out.wav",
+        synthesize=lambda current_chunk, output_path: output_path,
+        gemini=gemini, target_language="Persian", max_passes=2,
+    )
+    assert gemini.client.models.calls == 0
+    assert result.passes == 0
+    assert result.accepted_padding
     assert result.converged
 
 

@@ -92,8 +92,6 @@ def _desired_action(source_text: str, target_text: str, slot_seconds: float) -> 
     ratio = rough_seconds / max(0.35, slot_seconds)
     if ratio > 1.12:
         return "compress"
-    if ratio < 0.72:
-        return "expand"
     return "keep"
 
 
@@ -110,20 +108,16 @@ natural rate that matches the source speaker's perceived cadence and still fits 
 original time slot. Use the source text plus slot duration to infer that cadence.
 
 Target language: {target_language}
-Target speech occupancy: about {occupancy * 100:.0f}% of each slot. The small
-remaining margin is for breathing and natural pauses.
+Maximum speech occupancy: about {occupancy * 100:.0f}% of each slot. Shorter
+faithful speech is accepted and the remaining timeline stays silent.
 
 Rules:
 1. Preserve the source meaning, tone, names, numbers, claims, and intent.
 2. If the current translation is too long for the slot, COMPRESS it intelligently:
    remove redundancy, choose shorter natural wording, and summarize only wording,
    never facts or meaning.
-3. If the current translation is too short for the slot, EXPAND it naturally using
-   semantically equivalent phrasing, explicit wording, conversational connective
-   words, or emphasis already implied by the source. Never invent a new fact,
-   example, reason, opinion, name, number, event, or conclusion.
-4. If safe expansion would require inventing information, keep the faithful line
-   shorter and allow a natural pause instead.
+3. Never expand a translation merely to fill its slot. Keep short faithful speech
+   unchanged and allow the remaining timeline to be silent.
 5. Do not change the order or merge/split segments. Return exactly one item for every
    input index.
 6. Punctuation should help natural speech. Do not include timestamps, speaker names,
@@ -282,13 +276,15 @@ def adapt_transcript_timing(
 
             original = originals[index]
             action = str(item.get("action", "keep")).strip().lower()
-            if action not in {"compress", "expand", "keep"}:
+            if action not in {"compress", "keep"}:
                 if len(new_text) < len(original) * 0.88:
                     action = "compress"
-                elif len(new_text) > len(original) * 1.12:
-                    action = "expand"
                 else:
                     action = "keep"
+
+            if len(new_text) > len(original) * 1.08:
+                new_text = original
+                action = "keep"
 
             seg.target_text = new_text
             slot = max(0.25, float(seg.end) - float(seg.start))

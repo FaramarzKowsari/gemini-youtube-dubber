@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dubber.models import Segment, Transcript
-from cloud_cli_semantic_lock import _merge_source_continuations
+from dubber.sync_timeline import merge_semantic_continuations
 
 
 def _segment(start, end, source, target):
@@ -46,7 +46,7 @@ def test_real_parent_lock_failure_chunk_17_and_18_are_merged():
         ],
     )
 
-    result = _merge_source_continuations(transcript)
+    result = merge_semantic_continuations(transcript)
 
     assert len(result.segments) == 1
     merged = result.segments[0]
@@ -67,7 +67,7 @@ def test_complete_sentence_is_not_merged_even_with_zero_gap():
         ],
     )
 
-    result = _merge_source_continuations(transcript)
+    result = merge_semantic_continuations(transcript)
     assert len(result.segments) == 2
 
 
@@ -82,5 +82,5 @@ def test_nonzero_real_gap_is_not_consumed_by_semantic_merge():
         ],
     )
 
-    result = _merge_source_continuations(transcript)
+    result = merge_semantic_continuations(transcript)
     assert len(result.segments) == 2
