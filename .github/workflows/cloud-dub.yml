@@ -60,19 +60,19 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_DUBBER_CACHE_DIR: .tts-cache
 
-      GEMINI_TRANSCRIBE_MODEL: gemini-2.5-flash
-      GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash-lite,gemini-3.7-flash
+      # Quota-aware text model policy: use one efficient primary plus one proven
+      # fallback instead of fanning every timing request out across many models.
+      GEMINI_TRANSCRIBE_MODEL: gemini-2.5-flash-lite
+      GEMINI_TRANSCRIBE_FALLBACK_MODELS: gemini-2.5-flash
       GEMINI_HTTP_TIMEOUT_MS: '120000'
       GEMINI_TRANSCRIBE_MAX_RETRIES: '0'
 
-      # Reserve preferred TTS quota for measured timing correction passes.
       GEMINI_TTS_MODEL: gemini-3.1-flash-tts-preview
       GEMINI_TTS_FALLBACK_MODELS: gemini-2.5-flash-preview-tts
       GEMINI_TTS_REQUEST_BUDGET: '4'
       GEMINI_TTS_MAX_RETRIES: '0'
       DUB_TTS_FALLBACK_ENGINE: edge
 
-      # v0.3.6 exact sync: neutral Edge speech is generated one segment at a time.
       DUB_TTS_PRIMARY_ENGINE: edge
       DUB_SYNC_MODE: segment_locked
       DUB_SYNC_MAX_SEGMENT_SECONDS: '8'
@@ -82,25 +82,23 @@ jobs:
       DUB_SYNC_MIN_PAUSE_SECONDS: '0.12'
       DUB_SYNC_MAX_SILENCE_BORROW_SECONDS: '1.50'
 
-      # Edge deterministic timing overflow must escape immediately to AI timing
-      # feedback. Only genuine Edge network/service failures are retried here.
       EDGE_TTS_MAX_RETRIES: '0'
       EDGE_TTS_NETWORK_RETRIES: '1'
 
-      # Pre-TTS semantic timing adaptation. 0.80 substantially reduces the need
-      # for post-TTS Gemini correction while keeping short faithful speech silent.
+      # Do the strongest semantic shortening up front in one batch. Short speech
+      # remains untouched and the master timeline supplies the remaining silence.
       DUB_TIMING_DIRECTOR: '1'
-      DUB_TIMING_OCCUPANCY: '0.80'
+      DUB_TIMING_OCCUPANCY: '0.72'
       DUB_TIMING_BATCH_SIZE: '40'
 
-      # Measured closed-loop timing: synthesize -> measure -> compress -> retry.
-      # Keep the 1.10x natural-rate ceiling. Provider outages get a multi-minute
-      # bounded retry window rather than killing a long dub after ~60 seconds.
+      # Measured feedback is now a small exception path, not the main compressor.
+      # One rewrite round may try the efficient primary and one fallback, but the
+      # workflow never multiplies quota use with nested retry loops or process reruns.
       DUB_TIMING_MAX_SPEEDUP: '1.10'
       DUB_TIMING_EXPAND_BELOW: '0.80'
-      DUB_TIMING_FEEDBACK_MAX_PASSES: '4'
-      DUB_TIMING_AI_RETRY_ROUNDS: '5'
-      DUB_TIMING_AI_RETRY_BASE_SECONDS: '60'
+      DUB_TIMING_FEEDBACK_MAX_PASSES: '2'
+      DUB_TIMING_AI_RETRY_ROUNDS: '1'
+      DUB_TIMING_AI_RETRY_BASE_SECONDS: '0'
 
       GEMINI_REUSE_TRANSCRIPT_CHECKPOINT: '1'
 
@@ -205,61 +203,39 @@ jobs:
 
           rm -rf .prior-cloud-dubs
           if [ "$FOUND" -eq 0 ]; then
-            echo "No matching prior transcript artifact found; resilient Gemini analysis will run."
+            echo "No matching prior transcript artifact found; Gemini analysis will run."
           fi
           exit 0
 
       - name: Generate hybrid dubbing package
         shell: bash
         run: |
-          set +e
-
           SECONDARY_ARG=""
           if [ "$SECONDARY_VOICE" != "Same" ]; then
             SECONDARY_ARG="--secondary-voice $SECONDARY_VOICE"
           fi
 
-          LAST_STATUS=1
+          echo "============================================================"
+          echo "Gemini YouTube Dubber v0.5.4 · quota-aware run"
+          echo "Text timing primary: ${GEMINI_TRANSCRIBE_MODEL}"
+          echo "Text timing fallback: ${GEMINI_TRANSCRIBE_FALLBACK_MODELS}"
+          echo "Pre-TTS occupancy target: ${DUB_TIMING_OCCUPANCY}"
+          echo "Measured feedback passes: ${DUB_TIMING_FEEDBACK_MAX_PASSES}"
+          echo "Natural speech hard limit: ${DUB_TIMING_MAX_SPEEDUP}x"
+          echo "Full pipeline attempts: 1"
+          echo "============================================================"
 
-          for ATTEMPT in 1 2 3; do
-            echo "============================================================"
-            echo "Gemini YouTube Dubber v0.5.0 · attempt ${ATTEMPT}/3"
-            echo "Analysis/translation: Gemini GenerateContent"
-            echo "Precision speech: onset-locked Edge TTS with real-silence deadline borrowing"
-            echo "Automatic speech fallback: Edge Neural TTS"
-            echo "Measured timing feedback: ON"
-            echo "Exact Edge timing guard -> AI text repair: ON"
-            echo "Natural speech hard limit: ${DUB_TIMING_MAX_SPEEDUP}x"
-            echo "Max AI timing feedback passes: $DUB_TIMING_FEEDBACK_MAX_PASSES"
-            echo "Gemini preferred request budget: $GEMINI_TTS_REQUEST_BUDGET"
-            echo "============================================================"
-
-            python cloud_cli.py \
-              --youtube-url "$YOUTUBE_URL" \
-              --target-language "$TARGET_LANGUAGE" \
-              --primary-voice "$PRIMARY_VOICE" \
-              $SECONDARY_ARG \
-              --chunk-seconds "$CHUNK_SECONDS" \
-              --chunk-max-gap 2.0 \
-              --tts-rpm 3 \
-              --fallback-tts edge \
-              --original-audio-percent "$ORIGINAL_AUDIO_PERCENT" \
-              --output-root cloud-output
-
-            LAST_STATUS=$?
-
-            if [ "$LAST_STATUS" -eq 0 ]; then
-              exit 0
-            fi
-
-            if [ "$ATTEMPT" -lt 3 ]; then
-              echo "::warning::Attempt ${ATTEMPT}/3 failed with code ${LAST_STATUS}; cooling down 180s before a fresh Timing Director attempt. Matching transcript and speech cache will be reused."
-              sleep 180
-            fi
-          done
-
-          echo "::error::Cloud Dub failed after 3 bounded process attempts."
-          exit "$LAST_STATUS"
+          python cloud_cli.py \
+            --youtube-url "$YOUTUBE_URL" \
+            --target-language "$TARGET_LANGUAGE" \
+            --primary-voice "$PRIMARY_VOICE" \
+            $SECONDARY_ARG \
+            --chunk-seconds "$CHUNK_SECONDS" \
+            --chunk-max-gap 2.0 \
+            --tts-rpm 3 \
+            --fallback-tts edge \
+            --original-audio-percent "$ORIGINAL_AUDIO_PERCENT" \
+            --output-root cloud-output
 
       - name: Save reusable speech and transcript cache
         if: always()
@@ -297,11 +273,10 @@ jobs:
           {
             echo "## Cloud dub package is ready"
             echo ""
-            echo "v0.5.0 uses semantic source timing units, no per-segment padding, and bounded transient Gemini retries."
-            echo "Overlong speech is rewritten and re-synthesized instead of being rushed."
+            echo "v0.5.4 uses quota-aware Flash-Lite-first timing, one bounded pipeline run, semantic source timing units, and no per-segment padding."
+            echo "Overlong speech is rewritten and re-synthesized instead of being rushed above 1.10x."
             echo "Short speech is accepted unchanged; the master timeline supplies silence."
-            echo "Recovered transcripts now use the same fingerprint as the main pipeline."
-            echo "See timing_feedback.json for per-chunk measurements."
+            echo "See timing_report.json and timing_feedback.json for timing diagnostics."
             echo ""
             echo "Download the cloud-dub-package artifact."
             echo "Then run FINALIZE_CLOUD_DUB_WINDOWS.bat on Windows."
