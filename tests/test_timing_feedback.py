@@ -171,3 +171,32 @@ def test_unresolved_overrun_fails_instead_of_rushing(monkeypatch, tmp_path: Path
             max_speedup=1.06,
             max_passes=2,
         )
+
+
+def test_noop_compression_pass_can_reach_stronger_later_pass(monkeypatch, tmp_path: Path):
+    original = "این یک ترجمه نسبتاً طولانی برای آزمایش است"
+    chunk = _chunk(original)
+    gemini = _Gemini([
+        _payload(original),
+        _payload("ترجمه فشرده"),
+    ])
+    durations = iter([2.40, 2.40, 2.08])
+    monkeypatch.setattr(timing_feedback, "probe_duration", lambda _: next(durations))
+
+    result = timing_feedback.synthesize_with_timing_feedback(
+        chunk=chunk,
+        output_wav=tmp_path / "out.wav",
+        synthesize=lambda current_chunk, output_path: output_path,
+        gemini=gemini,
+        target_language="Persian",
+        max_speedup=1.10,
+        max_passes=3,
+    )
+
+    assert gemini.client.models.calls == 2
+    assert result.passes == 2
+    assert result.adjustments[0].changed_segments == 0
+    assert result.adjustments[1].changed_segments == 1
+    assert chunk.segments[0].target_text == "ترجمه فشرده"
+    assert result.final_ratio == pytest.approx(1.04)
+    assert result.converged
