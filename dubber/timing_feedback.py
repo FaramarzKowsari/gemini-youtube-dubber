@@ -409,10 +409,18 @@ def synthesize_with_timing_feedback(
         )
 
         if changed == 0:
+            if action == "compress" and len(adjustments) < max_passes:
+                _notify(
+                    progress,
+                    0.0,
+                    "Timing rewrite made no text change; trying the next stronger "
+                    f"compression pass ({len(adjustments) + 1}/{max_passes})",
+                )
+                continue
             if action == "compress":
                 raise TimingConvergenceError(
                     "Audio is too long, but Timing Director could not shorten the text "
-                    "without violating meaning-preservation rules."
+                    "within the configured semantic compression passes."
                 )
             break
 
