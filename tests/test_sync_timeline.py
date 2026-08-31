@@ -109,6 +109,50 @@ def test_zero_gap_micro_cue_merges_with_same_speaker_followup():
     assert "حالا انجامش دهیم" in result.segments[0].target_text
 
 
+def test_ultra_short_heading_can_bridge_borrowable_same_speaker_silence(monkeypatch):
+    monkeypatch.setenv("DUB_SYNC_MAX_SILENCE_BORROW_SECONDS", "1.50")
+
+    transcript = Transcript(
+        detected_language="English",
+        target_language="Persian",
+        title="x",
+        segments=[
+            Segment(
+                start=632.06,
+                end=633.32,
+                speaker="Speaker 1",
+                source_text="Keep four things in mind.",
+                target_text="چهار نکته را به یاد داشته باشید.",
+                emotion="neutral",
+            ),
+            Segment(
+                start=634.33,
+                end=638.19,
+                speaker="Speaker 1",
+                source_text=(
+                    "Copied futures positions are still leveraged futures positions, "
+                    "and they can be liquidated."
+                ),
+                target_text=(
+                    "پوزیشن‌های کپی‌شده همان پوزیشن‌های اهرم‌دار هستند و ممکن است "
+                    "لیکوئید شوند."
+                ),
+                emotion="serious",
+            ),
+        ],
+    )
+
+    result = merge_semantic_continuations(transcript)
+
+    assert len(result.segments) == 1
+    assert result.segments[0].start == 632.06
+    assert result.segments[0].end == 638.19
+    assert "Keep four things in mind." in result.segments[0].source_text
+    assert "Copied futures positions" in result.segments[0].source_text
+    assert "چهار نکته" in result.segments[0].target_text
+    assert "پوزیشن‌های کپی‌شده" in result.segments[0].target_text
+
+
 def test_micro_cue_does_not_merge_across_speaker_change_or_real_pause():
     transcript = Transcript(
         detected_language="English",

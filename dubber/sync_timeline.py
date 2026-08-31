@@ -22,23 +22,35 @@ def merge_semantic_continuations(
     *,
     max_gap_seconds: float = 0.05,
     max_micro_cue_seconds: float = 3.0,
+    max_micro_pause_seconds: float | None = None,
     max_merged_seconds: float = 15.0,
 ) -> Transcript:
-    """Merge contiguous same-speaker cues that belong to one natural speech unit.
+    """Merge same-speaker cues that belong to one natural speech unit.
 
     The original semantic-lock rule merges zero-gap cues when the previous source cue
-    is clearly an unfinished sentence. v0.5.7 adds one conservative case for a
-    complete but very short lead-in cue: it may merge with an immediately following
-    same-speaker cue only when that following cue is substantially longer. Two
-    independent short complete sentences therefore remain separate.
+    is clearly an unfinished sentence. v0.5.7 added one conservative case for a
+    complete but very short lead-in cue immediately followed by a substantially
+    longer cue. A second conservative case now allows an *ultra-short* complete cue
+    (<= 1.5s) to bridge a short same-speaker pause when that pause is no longer than
+    the configured real-silence borrowing limit. This handles tiny headings such as
+    "Keep four things in mind." without treating ordinary 2s sentences separated by
+    a real pause as one utterance.
 
-    This prevents an artificial 1-3 second dubbing deadline from forcing meaning loss
-    or rushed speech while preserving the original first onset and final cue end.
+    The merged unit preserves the original first onset and final cue end; no later
+    cue onset is moved. The internal source pause simply becomes timing room available
+    to the merged utterance, bounded by DUB_SYNC_MAX_SILENCE_BORROW_SECONDS.
     """
     result = transcript.model_copy(deep=True)
     merged: list[Segment] = []
     max_gap = max(0.0, float(max_gap_seconds))
     micro_limit = max(0.25, float(max_micro_cue_seconds))
+    if max_micro_pause_seconds is None:
+        micro_pause_limit = max(
+            0.0,
+            float(os.getenv("DUB_SYNC_MAX_SILENCE_BORROW_SECONDS", "1.50")),
+        )
+    else:
+        micro_pause_limit = max(0.0, float(max_micro_pause_seconds))
     merged_limit = max(micro_limit, float(max_merged_seconds))
 
     for original in result.segments:
@@ -64,7 +76,24 @@ def merge_semantic_continuations(
                 and combined_duration <= merged_limit
             )
 
-            if contiguous and same_speaker and (incomplete or micro_lead_in):
+            # Some source editors leave about a second of genuine silence after an
+            # ultra-short heading before the explanation begins. For a <=1.5s cue,
+            # keep that silence available inside one same-speaker semantic unit when
+            # the following cue is clearly the longer continuation. Ordinary ~2s
+            # standalone sentences still do not cross real pauses.
+            micro_pause_bridge = (
+                not incomplete
+                and max_gap < gap <= micro_pause_limit
+                and previous_duration <= min(micro_limit, 1.5)
+                and current_duration >= 3.0
+                and current_duration >= previous_duration * 2.0
+                and combined_duration <= merged_limit
+            )
+
+            if same_speaker and (
+                (contiguous and (incomplete or micro_lead_in))
+                or micro_pause_bridge
+            ):
                 merged[-1] = Segment(
                     start=float(previous.start),
                     end=float(current.end),
