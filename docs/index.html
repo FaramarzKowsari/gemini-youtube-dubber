@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Gemini YouTube Dubber — a multilingual technical overview of the architecture, achievements, goals, limitations and roadmap." />
+  <meta name="theme-color" content="#07111f" />
+  <meta property="og:title" content="Gemini YouTube Dubber — Technical Project Overview" />
+  <meta property="og:description" content="How Gemini YouTube Dubber translates, times, synthesizes and packages multilingual dubbing — plus what it achieved and what comes next." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://faramarzkowsari.github.io/gemini-youtube-dubber/" />
+  <link rel="canonical" href="https://faramarzkowsari.github.io/gemini-youtube-dubber/" />
+  <title>Gemini YouTube Dubber — Project Overview</title>
+  <style>
+    :root{
+      color-scheme:dark;
+      --bg:#07111f;--bg2:#0b1729;--card:#0f1f35cc;--line:#213552;
+      --text:#eef5ff;--muted:#a8b7cc;--accent:#71e5ff;--accent2:#9d8cff;
+      --good:#66e3a4;--warn:#ffd36b;--shadow:0 18px 60px rgba(0,0,0,.28);
+      --max:1180px
+    }
+    *{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 15% 0%,#102d4a 0,transparent 32%),radial-gradient(circle at 90% 8%,#2d245b 0,transparent 25%),linear-gradient(180deg,var(--bg),#050b14 70%);color:var(--text);line-height:1.65}
+    a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}.wrap{width:min(var(--max),calc(100% - 32px));margin:auto}.skip{position:absolute;left:-9999px}.skip:focus{left:16px;top:12px;z-index:99;background:#fff;color:#000;padding:10px 14px;border-radius:8px}
+    header{position:sticky;top:0;z-index:20;background:#07111fd9;backdrop-filter:blur(16px);border-bottom:1px solid #ffffff12}.bar{min-height:68px;display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{font-weight:800;letter-spacing:.2px}.brand span{color:var(--accent)}.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.lang{border:1px solid var(--line);background:#0b1729;color:var(--muted);padding:8px 12px;border-radius:999px;cursor:pointer;font-weight:700}.lang:hover,.lang[aria-pressed="true"]{border-color:var(--accent);color:#fff;background:#102a43}.github{border:1px solid #ffffff22;padding:8px 13px;border-radius:999px;color:#fff;background:#ffffff0b}
+    .hero{padding:86px 0 42px}.eyebrow{display:inline-flex;gap:8px;align-items:center;border:1px solid #71e5ff45;background:#71e5ff12;color:#a9f2ff;border-radius:999px;padding:7px 12px;font-size:.88rem;font-weight:800}.dot{width:8px;height:8px;background:var(--good);border-radius:50%;box-shadow:0 0 14px var(--good)}h1{font-size:clamp(2.45rem,6vw,5.6rem);line-height:.98;margin:22px 0 20px;letter-spacing:-.055em;max-width:1000px}.lead{font-size:clamp(1.05rem,2vw,1.35rem);color:#c1d0e4;max-width:880px}.hero-grid{display:grid;grid-template-columns:1.35fr .65fr;gap:22px;align-items:stretch;margin-top:36px}.hero-card,.card,.metric,.road{border:1px solid var(--line);background:linear-gradient(145deg,#102139d9,#0b1728d9);border-radius:20px;box-shadow:var(--shadow)}.hero-card{padding:26px}.pipeline{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#cfdded;font-size:.94rem;white-space:pre-wrap;margin:0}.metric-stack{display:grid;grid-template-columns:1fr 1fr;gap:12px}.metric{padding:18px}.metric strong{display:block;font-size:1.72rem;color:#fff}.metric small{color:var(--muted)}
+    .toc{display:flex;gap:8px;flex-wrap:wrap;margin:28px 0 10px}.toc a{font-size:.9rem;color:#c5d7eb;border:1px solid var(--line);background:#ffffff08;padding:7px 11px;border-radius:999px}.section{padding:58px 0}.section+.section{border-top:1px solid #ffffff0d}.kicker{color:var(--accent);font-size:.84rem;font-weight:900;text-transform:uppercase;letter-spacing:.14em}.section h2{font-size:clamp(1.8rem,4vw,3rem);line-height:1.1;margin:10px 0 16px;letter-spacing:-.03em}.section-intro{max-width:850px;color:var(--muted);font-size:1.07rem}.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:24px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:24px}.card{padding:22px}.card h3{margin:0 0 8px;font-size:1.08rem}.card p,.card li{color:#b6c5d8}.card ul{padding-left:19px;margin-bottom:0}.tag{display:inline-block;font-size:.75rem;font-weight:800;color:#c7f7ff;border:1px solid #71e5ff3b;background:#71e5ff0d;padding:4px 8px;border-radius:999px;margin:0 4px 6px 0}.good{color:var(--good)}.warning{color:var(--warn)}
+    .steps{display:grid;gap:12px;margin-top:24px}.step{display:grid;grid-template-columns:48px 1fr;gap:16px;align-items:start;padding:17px;border:1px solid var(--line);border-radius:16px;background:#ffffff07}.step-num{width:42px;height:42px;display:grid;place-items:center;border-radius:12px;background:linear-gradient(135deg,#163957,#312d62);font-weight:900;color:#fff}.step h3{margin:1px 0 4px}.step p{margin:0;color:var(--muted)}
+    .table-wrap{overflow:auto;margin-top:22px;border:1px solid var(--line);border-radius:18px}table{width:100%;border-collapse:collapse;min-width:720px;background:#0c192bba}th,td{text-align:left;padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:top}th{color:#fff;background:#11233a}td{color:#b9c9dc}tr:last-child td{border-bottom:0}
+    .success{border:1px solid #66e3a44a;background:linear-gradient(135deg,#0d2e29,#102238);padding:25px;border-radius:20px;margin-top:24px}.success h3{color:#b6ffdb;margin-top:0}.success-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:18px}.success-grid div{border:1px solid #ffffff14;background:#ffffff08;border-radius:14px;padding:14px}.success-grid strong{font-size:1.35rem;display:block}.success-grid small{color:#a8c9bb}
+    .roadmap{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:24px}.road{padding:21px}.road .priority{font-size:.76rem;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);font-weight:900}.road h3{margin:7px 0}.road p{color:var(--muted);margin-bottom:0}.note{padding:18px 20px;border-left:3px solid var(--accent2);background:#9d8cff0b;border-radius:0 14px 14px 0;color:#c2cde0;margin-top:24px}
+    footer{border-top:1px solid #ffffff14;margin-top:44px;padding:34px 0 54px;color:#8fa1b8}.footer-row{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap}.lang-panel[hidden]{display:none!important}.rtl{direction:rtl;text-align:right}
+    @media(max-width:900px){.hero-grid,.grid3,.success-grid{grid-template-columns:1fr 1fr}.grid2,.roadmap{grid-template-columns:1fr}.hero{padding-top:58px}}
+    @media(max-width:620px){.bar{align-items:flex-start;padding:12px 0}.actions{justify-content:flex-end}.hero-grid,.grid3,.success-grid,.metric-stack{grid-template-columns:1fr}.wrap{width:min(var(--max),calc(100% - 22px))}h1{font-size:2.65rem}.section{padding:44px 0}}
+  </style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <div class="wrap bar">
+    <div class="brand">Gemini <span>YouTube Dubber</span></div>
+    <div class="actions" aria-label="Language selector">
+      <button class="lang" data-lang="en" aria-pressed="true">EN</button>
+      <button class="lang" data-lang="tr" aria-pressed="false">TR</button>
+      <button class="lang" data-lang="es" aria-pressed="false">ES</button>
+      <a class="github" href="https://github.com/FaramarzKowsari/gemini-youtube-dubber">GitHub ↗</a>
+    </div>
+  </div>
+</header>
+<main id="content">
+
+<section class="lang-panel" data-panel="en" lang="en">
+  <div class="wrap hero">
+    <span class="eyebrow"><span class="dot"></span> v0.5.10 architecture · validated cloud run</span>
+    <h1>AI dubbing that treats timing as a first-class engineering problem.</h1>
+    <p class="lead">Gemini YouTube Dubber turns public YouTube content or local video into translated speech, subtitles and a synchronized dubbing package. Its core idea is simple: preserve meaning, preserve the source timeline, and never “solve” timing by making speech unnaturally fast or slow.</p>
+    <div class="hero-grid">
+      <div class="hero-card"><pre class="pipeline">Public YouTube URL / local video
+        ↓
+Gemini video understanding + translation
+        ↓
+Semantic source units + speaker/timestamp locks
+        ↓
+AI Timing Director (pre-TTS compression only when needed)
+        ↓
+Edge / Gemini speech synthesis
+        ↓
+Measured Timing Feedback (hard natural-rate limit: 1.10×)
+        ↓
+FFmpeg timeline placement + silence + soundtrack mix
+        ↓
+WAV + SRT + transcript + manifest → final MP4</pre></div>
+      <div class="metric-stack">
+        <div class="metric"><strong>37/37</strong><small>speech units completed in Cloud Dub #41</small></div>
+        <div class="metric"><strong>1.10×</strong><small>hard maximum natural-rate correction</small></div>
+        <div class="metric"><strong>3</strong><small>measured AI timing-feedback passes maximum</small></div>
+        <div class="metric"><strong>1.50 s</strong><small>maximum real-silence borrowing window</small></div>
+      </div>
+    </div>
+    <nav class="toc" aria-label="English contents">
+      <a href="#en-purpose">Purpose</a><a href="#en-how">How it works</a><a href="#en-tech">Technical architecture</a><a href="#en-achievement">Achievement</a><a href="#en-limitations">Limits</a><a href="#en-roadmap">Roadmap</a>
+    </nav>
+  </div>
+
+  <section class="section" id="en-purpose"><div class="wrap">
+    <div class="kicker">Purpose</div><h2>What problem does the project solve?</h2>
+    <p class="section-intro">Normal translation is not enough for dubbing. A correct translated sentence may take 30–70% longer to speak than the original. If software blindly stretches or speeds audio to fit, the result sounds robotic. This project treats translation, timing, speech generation and timeline placement as one coordinated system.</p>
+    <div class="grid3">
+      <article class="card"><h3>Meaning before speed</h3><p>Names, numbers, amounts, percentages, negations, claims and instructions should survive timing adaptation. AI is used to rewrite long dialogue more efficiently, not to delete facts.</p></article>
+      <article class="card"><h3>Natural timing</h3><p>Short speech is accepted as short. Remaining room stays silent. Overlong speech is rewritten and regenerated instead of being aggressively time-stretched.</p></article>
+      <article class="card"><h3>Source-timeline fidelity</h3><p>Speech stays anchored to the original onset and neighboring cues. Conservative semantic merges remove artificial micro-deadlines without moving the whole timeline.</p></article>
+    </div>
+  </div></section>
+
+  <section class="section" id="en-how"><div class="wrap">
+    <div class="kicker">Pipeline</div><h2>How it works, step by step</h2>
+    <div class="steps">
+      <div class="step"><div class="step-num">1</div><div><h3>Understand the source</h3><p>Gemini analyzes the public video URL or local media, producing speaker-aware timestamps, transcription and target-language translation. A reusable checkpoint prevents repeated video analysis when the same source is processed again.</p></div></div>
+      <div class="step"><div class="step-num">2</div><div><h3>Build semantic speech units</h3><p>Adjacent same-speaker fragments can be conservatively merged when they are clearly one unfinished sentence. v0.5.10 also bridges an ultra-short heading across a small real pause when the next same-speaker cue is the obvious longer continuation.</p></div></div>
+      <div class="step"><div class="step-num">3</div><div><h3>Run the AI Timing Director</h3><p>Before TTS, translated text is evaluated against its source slot. Only text predicted to be too long is compressed. Cloud mode currently targets about 72% pre-TTS occupancy and processes timing work in batches of ten.</p></div></div>
+      <div class="step"><div class="step-num">4</div><div><h3>Synthesize natural speech</h3><p>Cloud validation uses Edge Neural TTS as the primary speech engine, while the project also contains Gemini TTS support and fallback orchestration. The project does not clone the source voice.</p></div></div>
+      <div class="step"><div class="step-num">5</div><div><h3>Measure, do not guess</h3><p>Generated audio duration is measured. If it would require more than the hard 1.10× speed ceiling, Gemini receives the exact ratio and rewrites the text again. Up to three measured feedback passes are allowed.</p></div></div>
+      <div class="step"><div class="step-num">6</div><div><h3>Assemble the master timeline</h3><p>FFmpeg places speech at source positions, preserves silence, performs required audio operations and creates the dubbing track. Local finalization can combine the package with the source video into MP4.</p></div></div>
+    </div>
+  </div></section>
+
+  <section class="section" id="en-tech"><div class="wrap">
+    <div class="kicker">Technical architecture</div><h2>What is under the hood?</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Layer</th><th>Current role</th><th>Engineering choice</th></tr></thead>
+      <tbody>
+        <tr><td>AI understanding / timing</td><td>Transcription, translation, semantic compression and timing feedback</td><td><code>gemini-3.5-flash-lite</code> in the current Cloud workflow; model names remain environment-configurable.</td></tr>
+        <tr><td>Speech</td><td>Dubbing synthesis</td><td>Edge Neural TTS is primary in the validated Cloud path; Gemini TTS support remains available in the codebase.</td></tr>
+        <tr><td>Synchronization</td><td>Source-timestamp alignment</td><td><code>segment_locked</code> / onset-locked design, semantic continuation merging, micro-cue bridge, real-silence borrowing ≤ 1.50 s.</td></tr>
+        <tr><td>Timing control</td><td>Avoid rushed or slow-motion voice</td><td>Pre-TTS Timing Director + measured post-TTS feedback; hard speed ceiling 1.10×; short speech is never expanded just to fill time.</td></tr>
+        <tr><td>Media</td><td>Audio timing, mixing and final mux</td><td>FFmpeg via <code>imageio-ffmpeg</code>; no pydub/audioop dependency, keeping Python 3.13 compatibility.</td></tr>
+        <tr><td>Local UI</td><td>Interactive desktop/browser workflow</td><td>Streamlit, plus CLI and Windows/macOS/Linux launch paths.</td></tr>
+        <tr><td>Cloud</td><td>Remote processing</td><td>GitHub Actions with encrypted <code>GEMINI_API_KEY</code>, reusable transcript/TTS cache and downloadable artifacts.</td></tr>
+        <tr><td>Testing</td><td>Regression protection</td><td>CI matrix for Python 3.11, 3.12 and 3.13, including timing, API-shape and cloud-workflow tests.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="grid2">
+      <article class="card"><span class="tag">Semantic Lock</span><span class="tag">Micro-Cue Bridge</span><span class="tag">Onset Locked</span><h3>Why semantic units matter</h3><p>A subtitle boundary is not always a speech boundary. The system can merge only carefully defined same-speaker continuations, removing impossible 1–2 second deadlines while preserving the first onset and final end time.</p></article>
+      <article class="card"><span class="tag">Quota aware</span><span class="tag">Cache</span><span class="tag">Checkpoint</span><h3>Why the cloud path is hybrid</h3><p>GitHub runner IPs can be blocked by YouTube media delivery. The cloud workflow therefore lets Gemini understand the public URL and builds audio/SRT/JSON remotely, while final source-video download and mux can be completed locally.</p></article>
+    </div>
+  </div></section>
+
+  <section class="section" id="en-achievement"><div class="wrap">
+    <div class="kicker">Verified achievement</div><h2>What has the project actually achieved?</h2>
+    <p class="section-intro">The important milestone is not a demo screenshot; it is a completed end-to-end Cloud Dub package after repeated real failures exposed timing, quota, model-availability and micro-cue edge cases.</p>
+    <div class="success">
+      <h3>Cloud Dub #41 — successful validation</h3>
+      <p>The v0.5.10 semantic micro-cue fix reduced the source to 37 timestamp-locked speech units and completed all 37. Difficult chunks were measured, AI-compressed and re-synthesized while the 1.10× hard limit remained unchanged. The workflow then built and uploaded the complete cloud dubbing package.</p>
+      <div class="success-grid">
+        <div><strong>37 / 37</strong><small>speech chunks completed</small></div>
+        <div><strong>100%</strong><small>Cloud workflow conclusion: success</small></div>
+        <div><strong>~44.8 MB</strong><small>final artifact ZIP</small></div>
+        <div><strong>45</strong><small>files uploaded in the package</small></div>
+        <div><strong>≤ 1.10×</strong><small>natural-rate speed policy preserved</small></div>
+      </div>
+    </div>
+    <div class="grid3">
+      <article class="card"><h3>Resilience learned from failure</h3><p>The project survived API-format changes, Python 3.13 audio dependency issues, 429 quota exhaustion, 503 capacity failures, retired model names and timing-convergence failures. Each failure became a regression rule or architectural change.</p></article>
+      <article class="card"><h3>Auditable output</h3><p>Successful packages include <code>dubbed_audio.wav</code>, <code>dubbed.srt</code>, <code>transcript.json</code>, <code>manifest.json</code> and timing diagnostic files so the process is inspectable rather than opaque.</p></article>
+      <article class="card"><h3>Practical multilingual base</h3><p>Persian is the default target, but the pipeline accepts other target languages and can be driven locally, by CLI, Docker or GitHub Actions.</p></article>
+    </div>
+  </div></section>
+
+  <section class="section" id="en-limitations"><div class="wrap">
+    <div class="kicker">Reality check</div><h2>Current limitations</h2>
+    <div class="grid2">
+      <article class="card"><h3>Not phoneme-level lip sync</h3><p>Synchronization is timestamp/utterance based. It can sound naturally aligned, but it does not yet move a face or solve viseme-level mouth matching.</p></article>
+      <article class="card"><h3>Cloud finalization is still hybrid</h3><p>The cloud package is complete for dubbing audio and metadata, but YouTube bot protection can prevent GitHub from reliably downloading the source video. Final MP4 mux may therefore happen on the user machine.</p></article>
+      <article class="card"><h3>Provider quotas can still change</h3><p>Gemini availability, free-tier limits and model names are external constraints. The code is configurable and quota-aware, but it cannot create provider capacity.</p></article>
+      <article class="card"><h3>No source voice cloning</h3><p>The current project uses prebuilt voices. This is safer and simpler, but it does not reproduce each original speaker's identity or emotion exactly.</p></article>
+    </div>
+    <div class="note">Responsible use matters: only dub media you own, are authorized to adapt, or are licensed to reuse. API keys belong in local environment files or encrypted GitHub secrets — never in source control.</div>
+  </div></section>
+
+  <section class="section" id="en-roadmap"><div class="wrap">
+    <div class="kicker">Future roadmap</div><h2>What should be added next?</h2>
+    <p class="section-intro">These are engineering opportunities, not promises. The highest-value work is the work that makes quality measurable, reduces repeated API cost and removes the final manual step.</p>
+    <div class="roadmap">
+      <article class="road"><div class="priority">Priority 1</div><h3>Persistent timing-rewrite memory</h3><p>Cache successful AI timing rewrites by source text, target language, voice and timing slot so the same hard chunk never consumes Gemini quota twice.</p></article>
+      <article class="road"><div class="priority">Priority 1</div><h3>Fully automated final MP4 path</h3><p>Add reliable user-upload/object-storage ingestion or another authorized media source so GitHub can mux the final MP4 without depending on blocked YouTube runner downloads.</p></article>
+      <article class="road"><div class="priority">Priority 1</div><h3>Automatic quality gate</h3><p>Back-transcribe generated audio and score semantic fidelity, names/numbers, timing, loudness, clipping and missing speech before an artifact is declared successful.</p></article>
+      <article class="road"><div class="priority">Priority 2</div><h3>Editable transcript & timing studio</h3><p>Provide a visual timeline where users can edit translation, merge/split cues, lock terminology, choose a voice per speaker and regenerate only selected regions.</p></article>
+      <article class="road"><div class="priority">Priority 2</div><h3>Terminology / translation memory</h3><p>Add project dictionaries for names, brands, technical vocabulary, units and preferred translations, with explicit protection for numbers and negation.</p></article>
+      <article class="road"><div class="priority">Priority 2</div><h3>Multi-speaker scaling</h3><p>Go beyond two voice roles with better diarization, speaker profiles and consistent voice assignment across long videos and episode series.</p></article>
+      <article class="road"><div class="priority">Priority 3</div><h3>Optional consent-based voice matching</h3><p>Introduce voice similarity or cloning only with explicit consent, provenance records and clear disclosure, while retaining prebuilt voices as the safe default.</p></article>
+      <article class="road"><div class="priority">Priority 3</div><h3>Viseme / lip-sync integration</h3><p>Generate phoneme or viseme timing and optionally connect to a lip-sync model for close-up talking-head content where mouth alignment matters.</p></article>
+      <article class="road"><div class="priority">Priority 3</div><h3>Batch queue and observability</h3><p>Add a dashboard for multiple jobs, cost/request counters, cache hit rate, provider latency, failure classification and per-language quality history.</p></article>
+      <article class="road"><div class="priority">Productization</div><h3>Standalone desktop builds</h3><p>Package Windows, macOS and Linux binaries so non-Python users can run the local workflow, update safely and finalize cloud packages with one click.</p></article>
+    </div>
+  </div></section>
+</section>
+
+<section class="lang-panel" data-panel="tr" lang="tr" hidden>
+  <div class="wrap hero">
+    <span class="eyebrow"><span class="dot"></span> v0.5.10 mimarisi · doğrulanmış bulut çalışması</span>
+    <h1>Zamanlamayı birinci sınıf mühendislik problemi olarak ele alan yapay zekâ dublajı.</h1>
+    <p class="lead">Gemini YouTube Dubber, herkese açık YouTube içeriklerini veya yerel videoları çevrilmiş konuşma, altyazı ve senkronize dublaj paketine dönüştürür. Temel prensip nettir: anlamı koru, kaynak zaman çizgisini koru ve zamanlamayı sesi yapay biçimde aşırı hızlandırarak ya da yavaşlatarak “çözme”.</p>
+    <div class="hero-grid"><div class="hero-card"><pre class="pipeline">YouTube URL / yerel video
+        ↓
+Gemini video anlama + çeviri
+        ↓
+Anlamsal konuşma birimleri + konuşmacı/zaman kilitleri
+        ↓
+AI Timing Director
+        ↓
+Edge / Gemini konuşma sentezi
+        ↓
+Ölçülmüş Timing Feedback (sert sınır: 1.10×)
+        ↓
+FFmpeg zaman çizgisi yerleşimi + sessizlik + miks
+        ↓
+WAV + SRT + transcript + manifest → son MP4</pre></div>
+      <div class="metric-stack"><div class="metric"><strong>37/37</strong><small>Cloud Dub #41'de tamamlanan konuşma birimi</small></div><div class="metric"><strong>1.10×</strong><small>doğal hız için sert üst sınır</small></div><div class="metric"><strong>3</strong><small>azami ölçümlü AI düzeltme geçişi</small></div><div class="metric"><strong>1.50 sn</strong><small>azami gerçek sessizlik ödünç alma</small></div></div>
+    </div>
+    <nav class="toc"><a href="#tr-purpose">Amaç</a><a href="#tr-how">Nasıl çalışır?</a><a href="#tr-tech">Teknik mimari</a><a href="#tr-achievement">Başarı</a><a href="#tr-limitations">Sınırlar</a><a href="#tr-roadmap">Yol haritası</a></nav>
+  </div>
+  <section class="section" id="tr-purpose"><div class="wrap"><div class="kicker">Amaç</div><h2>Proje hangi sorunu çözüyor?</h2><p class="section-intro">Dublaj için yalnızca doğru çeviri yeterli değildir. Doğru çevrilmiş bir cümlenin okunması orijinalden çok daha uzun sürebilir. Ses körlemesine sıkıştırılırsa robotik bir sonuç çıkar. Bu proje çeviri, süre, konuşma üretimi ve zaman çizgisi yerleşimini tek bir sistem olarak tasarlar.</p><div class="grid3"><article class="card"><h3>Hızdan önce anlam</h3><p>İsimler, sayılar, tutarlar, yüzdeler, olumsuzluklar, iddialar ve talimatlar korunmalıdır. AI, gerçekleri silmek için değil, uzun ifadeyi daha verimli söylemek için kullanılır.</p></article><article class="card"><h3>Doğal zamanlama</h3><p>Kısa konuşma kısa kalır; kalan süre sessizliktir. Uzun konuşma ise aşırı time-stretch yerine yeniden yazılır ve yeniden üretilir.</p></article><article class="card"><h3>Kaynak zaman çizgisine sadakat</h3><p>Konuşma başlangıçları kaynak videoya bağlı kalır. Yalnızca güvenli anlamsal birleştirmeler yapay mikro-deadline'ları kaldırır.</p></article></div></div></section>
+  <section class="section" id="tr-how"><div class="wrap"><div class="kicker">İşlem hattı</div><h2>Adım adım nasıl çalışır?</h2><div class="steps">
+    <div class="step"><div class="step-num">1</div><div><h3>Kaynağı anla</h3><p>Gemini konuşmacı etiketleri, zaman damgaları, transkript ve hedef dil çevirisi üretir. Checkpoint sistemi aynı videonun tekrar analiz edilmesini önler.</p></div></div>
+    <div class="step"><div class="step-num">2</div><div><h3>Anlamsal konuşma birimleri oluştur</h3><p>Aynı konuşmacının bölünmüş ama tek cümle olan parçaları kontrollü biçimde birleştirilebilir. v0.5.10, çok kısa bir başlığı küçük bir gerçek sessizlik üzerinden açıkça devam eden sonraki cümleyle birleştirebilir.</p></div></div>
+    <div class="step"><div class="step-num">3</div><div><h3>AI Timing Director</h3><p>TTS'den önce metin kaynak konuşma yuvasıyla karşılaştırılır. Yalnızca fazla uzun görünen metin kısaltılır. Bulut ayarı yaklaşık %72 doluluk hedefi ve 10'luk batch kullanır.</p></div></div>
+    <div class="step"><div class="step-num">4</div><div><h3>Doğal konuşmayı üret</h3><p>Doğrulanmış bulut yolunda Edge Neural TTS birincil motordur. Kod tabanında Gemini TTS ve fallback orkestrasyonu da vardır. Kaynak ses klonlanmaz.</p></div></div>
+    <div class="step"><div class="step-num">5</div><div><h3>Tahmin etme, ölç</h3><p>Gerçek ses süresi ölçülür. 1.10×'ten fazla hız gerekecekse Gemini'ye tam oran geri verilir ve metin tekrar sıkıştırılır. En fazla üç geçiş vardır.</p></div></div>
+    <div class="step"><div class="step-num">6</div><div><h3>Ana zaman çizgisini kur</h3><p>FFmpeg konuşmaları kaynak konumlarına yerleştirir, sessizliği korur, ses işlemlerini uygular ve dublaj kanalını oluşturur. Yerel finalize adımı kaynak videoyla MP4 mux yapabilir.</p></div></div>
+  </div></div></section>
+  <section class="section" id="tr-tech"><div class="wrap"><div class="kicker">Teknik mimari</div><h2>Kaputun altında ne var?</h2><div class="table-wrap"><table><thead><tr><th>Katman</th><th>Görev</th><th>Teknik seçim</th></tr></thead><tbody>
+    <tr><td>AI anlama / timing</td><td>Transkripsiyon, çeviri, anlamsal sıkıştırma, timing feedback</td><td>Bulut workflow'unda <code>gemini-3.5-flash-lite</code>; model adları environment variable ile değiştirilebilir.</td></tr>
+    <tr><td>Konuşma</td><td>Dublaj sentezi</td><td>Doğrulanmış bulut yolunda Edge Neural TTS; kodda Gemini TTS desteği de bulunur.</td></tr>
+    <tr><td>Senkronizasyon</td><td>Kaynak zaman damgalarına hizalama</td><td><code>segment_locked</code>, onset-lock, Semantic Lock, Micro-Cue Bridge, ≤1.50 sn sessizlik ödünç alma.</td></tr>
+    <tr><td>Timing kontrolü</td><td>Aşırı hızlı/yavaş sesi önleme</td><td>Pre-TTS Timing Director + ölçümlü post-TTS feedback; sert sınır 1.10×; kısa ses slot doldurmak için uzatılmaz.</td></tr>
+    <tr><td>Medya</td><td>Timing, miks, mux</td><td>FFmpeg + <code>imageio-ffmpeg</code>; pydub/audioop yok; Python 3.13 uyumlu.</td></tr>
+    <tr><td>Arayüz</td><td>Yerel kullanım</td><td>Streamlit + CLI + Windows/macOS/Linux çalıştırma yolları.</td></tr>
+    <tr><td>Bulut</td><td>Uzaktan dublaj</td><td>GitHub Actions, şifreli <code>GEMINI_API_KEY</code>, transcript/TTS cache ve artifact.</td></tr>
+    <tr><td>Test</td><td>Regresyon koruması</td><td>Python 3.11/3.12/3.13 CI matrisi ve timing/API/cloud testleri.</td></tr>
+  </tbody></table></div><div class="grid2"><article class="card"><span class="tag">Semantic Lock</span><span class="tag">Micro-Cue Bridge</span><h3>Neden anlamsal birim?</h3><p>Altyazı sınırı her zaman gerçek konuşma sınırı değildir. Sistem yalnızca net kurallara uyan aynı konuşmacı devamlarını birleştirir ve ilk başlangıç ile son bitişi korur.</p></article><article class="card"><span class="tag">Quota aware</span><span class="tag">Cache</span><h3>Neden hibrit bulut?</h3><p>GitHub runner IP'leri YouTube tarafından engellenebilir. Bu yüzden bulut URL'yi Gemini'ye analiz ettirir ve ses/SRT/JSON üretir; son video indirme ve mux yerelde yapılabilir.</p></article></div></div></section>
+  <section class="section" id="tr-achievement"><div class="wrap"><div class="kicker">Doğrulanmış başarı</div><h2>Proje somut olarak ne başardı?</h2><p class="section-intro">Önemli kilometre taşı bir ekran görüntüsü değil; gerçek 429, 503, model kaldırılması ve timing hatalarından sonra başarıyla tamamlanan bir Cloud Dub paketidir.</p><div class="success"><h3>Cloud Dub #41 — başarıyla tamamlandı</h3><p>v0.5.10 Micro-Cue düzeltmesi kaynağı 37 timestamp-kilitli konuşma birimine dönüştürdü ve 37'sinin tamamı işlendi. Zor parçalar ölçüldü, AI ile kısaltıldı ve tekrar sentezlendi; 1.10× üst sınırı değiştirilmedi.</p><div class="success-grid"><div><strong>37 / 37</strong><small>tamamlanan chunk</small></div><div><strong>100%</strong><small>workflow sonucu: success</small></div><div><strong>~44.8 MB</strong><small>artifact ZIP</small></div><div><strong>45</strong><small>paketteki dosya</small></div><div><strong>≤ 1.10×</strong><small>korunan hız politikası</small></div></div></div><div class="grid3"><article class="card"><h3>Hatalardan öğrenen mimari</h3><p>API format değişiklikleri, Python 3.13 bağımlılık sorunu, quota, 503 kapasite, kullanımdan kalkan modeller ve timing hataları mimari kurala veya regresyon testine dönüştürüldü.</p></article><article class="card"><h3>Denetlenebilir çıktı</h3><p><code>dubbed_audio.wav</code>, <code>dubbed.srt</code>, <code>transcript.json</code>, <code>manifest.json</code> ve timing raporları süreci şeffaf tutar.</p></article><article class="card"><h3>Çok dilli temel</h3><p>Varsayılan hedef Farsçadır; ancak farklı hedef diller, yerel UI, CLI, Docker ve GitHub Actions yolları desteklenir.</p></article></div></div></section>
+  <section class="section" id="tr-limitations"><div class="wrap"><div class="kicker">Gerçek sınırlar</div><h2>Bugünkü sınırlamalar</h2><div class="grid2"><article class="card"><h3>Fonem düzeyinde lip-sync değil</h3><p>Senkronizasyon konuşma/timestamp düzeyindedir; ağız şekli/viseme üretmez.</p></article><article class="card"><h3>Bulut finalize hâlâ hibrit</h3><p>Bulut ses ve metadata paketini tamamlar; fakat GitHub'ın YouTube indirmesi bot korumasına takılabildiği için son MP4 mux yerelde gerekebilir.</p></article><article class="card"><h3>Sağlayıcı quota'sı dışsal</h3><p>Model adları, free-tier sınırları ve kapasite Google tarafından değiştirilebilir. Kod uyarlanabilir ama sağlayıcı kapasitesi yaratamaz.</p></article><article class="card"><h3>Kaynak ses klonlama yok</h3><p>Hazır sesler kullanılır; her orijinal konuşmacının kimliğini birebir taklit etmez.</p></article></div><div class="note">Yalnızca sahip olduğunuz, izinli veya lisanslı medyayı dublajlayın. Gerçek API anahtarlarını hiçbir zaman Git'e commit etmeyin.</div></div></section>
+  <section class="section" id="tr-roadmap"><div class="wrap"><div class="kicker">Gelecek yol haritası</div><h2>Sırada hangi özellikler olmalı?</h2><p class="section-intro">Bunlar teknik geliştirme önerileridir. En yüksek değer: tekrar API tüketimini azaltmak, kaliteyi ölçmek ve son manuel adımı ortadan kaldırmaktır.</p><div class="roadmap">
+    <article class="road"><div class="priority">Öncelik 1</div><h3>Kalıcı timing rewrite cache</h3><p>Başarılı sıkıştırmaları kaynak metin + hedef dil + ses + slot anahtarıyla saklayarak aynı zor cümlenin tekrar Gemini isteği tüketmesini engelle.</p></article>
+    <article class="road"><div class="priority">Öncelik 1</div><h3>Tam otomatik final MP4</h3><p>Kullanıcı yükleme/object storage gibi güvenilir bir kaynak ekleyerek GitHub'ın YouTube indirmesine bağımlı olmadan final mux yap.</p></article>
+    <article class="road"><div class="priority">Öncelik 1</div><h3>Otomatik kalite kapısı</h3><p>Üretilen sesi tekrar ASR ile çözümleyip anlam, isim/sayı, timing, loudness, clipping ve eksik konuşmayı puanla.</p></article>
+    <article class="road"><div class="priority">Öncelik 2</div><h3>Görsel transcript/timing editörü</h3><p>Çeviri düzenleme, cue birleştirme/bölme, terminoloji kilidi, konuşmacı sesi ve seçili bölge regenerasyonu sun.</p></article>
+    <article class="road"><div class="priority">Öncelik 2</div><h3>Terminoloji ve translation memory</h3><p>İsim, marka, teknik terim, birim ve tercih edilen çeviri sözlükleri ekle; sayı ve olumsuzlukları özel olarak kilitle.</p></article>
+    <article class="road"><div class="priority">Öncelik 2</div><h3>Daha fazla konuşmacı</h3><p>İki rolün ötesinde diarization, konuşmacı profili ve uzun videolarda tutarlı ses eşleştirme geliştir.</p></article>
+    <article class="road"><div class="priority">Öncelik 3</div><h3>İzin tabanlı voice matching</h3><p>Açık rıza, provenance ve açıklama şartıyla opsiyonel ses benzerliği/klonlama; hazır sesler güvenli varsayılan olarak kalsın.</p></article>
+    <article class="road"><div class="priority">Öncelik 3</div><h3>Viseme / lip-sync</h3><p>Yakın plan konuşma videoları için fonem/viseme timing ve isteğe bağlı lip-sync modeli entegrasyonu.</p></article>
+    <article class="road"><div class="priority">Ürünleşme</div><h3>Standalone masaüstü paketleri</h3><p>Python kurmadan çalışan Windows, macOS ve Linux binary'leri ve tek tıkla cloud finalize akışı.</p></article>
+    <article class="road"><div class="priority">Ürünleşme</div><h3>Queue + gözlemlenebilirlik</h3><p>Çoklu iş kuyruğu, quota/cost sayaçları, cache hit oranı, latency, hata sınıflandırması ve kalite geçmişi.</p></article>
+  </div></div></section>
+</section>
+
+<section class="lang-panel" data-panel="es" lang="es" hidden>
+  <div class="wrap hero"><span class="eyebrow"><span class="dot"></span> arquitectura v0.5.10 · ejecución cloud validada</span><h1>Doblaje con IA que trata la sincronización como un problema de ingeniería de primera clase.</h1><p class="lead">Gemini YouTube Dubber transforma vídeos públicos de YouTube o archivos locales en voz traducida, subtítulos y un paquete de doblaje sincronizado. La idea central es conservar el significado, conservar la línea de tiempo original y no “resolver” la duración acelerando o ralentizando la voz de forma artificial.</p><div class="hero-grid"><div class="hero-card"><pre class="pipeline">URL pública / vídeo local
+        ↓
+Comprensión de vídeo + traducción con Gemini
+        ↓
+Unidades semánticas + bloqueos de hablante/tiempo
+        ↓
+AI Timing Director
+        ↓
+Síntesis de voz Edge / Gemini
+        ↓
+Timing Feedback medido (límite duro: 1.10×)
+        ↓
+FFmpeg: colocación + silencios + mezcla
+        ↓
+WAV + SRT + transcript + manifest → MP4 final</pre></div><div class="metric-stack"><div class="metric"><strong>37/37</strong><small>unidades completadas en Cloud Dub #41</small></div><div class="metric"><strong>1.10×</strong><small>límite máximo de corrección natural</small></div><div class="metric"><strong>3</strong><small>pasadas máximas de feedback medido</small></div><div class="metric"><strong>1.50 s</strong><small>silencio real máximo reutilizable</small></div></div></div><nav class="toc"><a href="#es-purpose">Objetivo</a><a href="#es-how">Cómo funciona</a><a href="#es-tech">Arquitectura</a><a href="#es-achievement">Logro</a><a href="#es-limitations">Límites</a><a href="#es-roadmap">Roadmap</a></nav></div>
+  <section class="section" id="es-purpose"><div class="wrap"><div class="kicker">Objetivo</div><h2>¿Qué problema resuelve?</h2><p class="section-intro">Traducir correctamente no basta para doblar. Una frase traducida puede necesitar mucho más tiempo que la original. Si el software fuerza el audio a entrar mediante time-stretch agresivo, la voz suena robótica. Este proyecto coordina traducción, duración, síntesis y montaje temporal como un único sistema.</p><div class="grid3"><article class="card"><h3>Significado antes que velocidad</h3><p>Nombres, números, importes, porcentajes, negaciones, afirmaciones e instrucciones deben conservarse. La IA compacta la formulación, no los hechos.</p></article><article class="card"><h3>Ritmo natural</h3><p>Si la voz es corta, se acepta corta y el resto queda en silencio. Si es demasiado larga, el texto se reescribe y se vuelve a sintetizar.</p></article><article class="card"><h3>Fidelidad temporal</h3><p>Los inicios permanecen anclados al vídeo original. Fusiones semánticas conservadoras eliminan micro-plazos imposibles sin desplazar toda la línea de tiempo.</p></article></div></div></section>
+  <section class="section" id="es-how"><div class="wrap"><div class="kicker">Pipeline</div><h2>Cómo funciona, paso a paso</h2><div class="steps"><div class="step"><div class="step-num">1</div><div><h3>Comprender la fuente</h3><p>Gemini genera transcripción, hablantes, timestamps y traducción. Un checkpoint reutilizable evita analizar de nuevo el mismo vídeo.</p></div></div><div class="step"><div class="step-num">2</div><div><h3>Construir unidades semánticas</h3><p>Fragmentos contiguos del mismo hablante pueden fusionarse cuando forman claramente una sola frase. v0.5.10 permite además unir un encabezado ultracorto con su continuación tras una pequeña pausa real.</p></div></div><div class="step"><div class="step-num">3</div><div><h3>AI Timing Director</h3><p>Antes del TTS, el texto se compara con su slot de origen. Solo se comprime si parece demasiado largo. En cloud se usa un objetivo previo cercano al 72% y lotes de 10.</p></div></div><div class="step"><div class="step-num">4</div><div><h3>Generar voz natural</h3><p>La ruta cloud validada usa Edge Neural TTS como motor principal. El código mantiene soporte para Gemini TTS. No clona la identidad vocal original.</p></div></div><div class="step"><div class="step-num">5</div><div><h3>Medir, no adivinar</h3><p>Se mide la duración real. Si exigiría más de 1.10×, Gemini recibe el ratio exacto y vuelve a compactar el texto. Máximo: tres pasadas.</p></div></div><div class="step"><div class="step-num">6</div><div><h3>Montar la línea de tiempo</h3><p>FFmpeg coloca cada voz, conserva silencios y construye la pista final. La finalización local puede muxearla con el vídeo fuente.</p></div></div></div></div></section>
+  <section class="section" id="es-tech"><div class="wrap"><div class="kicker">Arquitectura técnica</div><h2>¿Qué hay debajo?</h2><div class="table-wrap"><table><thead><tr><th>Capa</th><th>Función</th><th>Elección técnica</th></tr></thead><tbody><tr><td>IA / timing</td><td>Transcripción, traducción, compresión semántica y feedback</td><td><code>gemini-3.5-flash-lite</code> en el workflow cloud actual; modelos configurables por entorno.</td></tr><tr><td>Voz</td><td>Síntesis de doblaje</td><td>Edge Neural TTS en la ruta cloud validada; soporte Gemini TTS en el código.</td></tr><tr><td>Sincronización</td><td>Alineación con timestamps</td><td><code>segment_locked</code>, onset-lock, Semantic Lock, Micro-Cue Bridge y préstamo de silencio ≤ 1.50 s.</td></tr><tr><td>Control temporal</td><td>Evitar voz acelerada/lenta</td><td>Timing Director pre-TTS + feedback post-TTS medido; techo 1.10×; la voz corta no se expande para rellenar.</td></tr><tr><td>Media</td><td>Timing, mezcla y mux</td><td>FFmpeg + <code>imageio-ffmpeg</code>, sin pydub/audioop, compatible con Python 3.13.</td></tr><tr><td>UI local</td><td>Uso interactivo</td><td>Streamlit + CLI + launchers multiplataforma.</td></tr><tr><td>Cloud</td><td>Procesamiento remoto</td><td>GitHub Actions, secreto <code>GEMINI_API_KEY</code>, caché reutilizable y artifacts.</td></tr><tr><td>Pruebas</td><td>Protección contra regresiones</td><td>Matriz CI Python 3.11/3.12/3.13 y tests de timing, API y workflow.</td></tr></tbody></table></div><div class="grid2"><article class="card"><span class="tag">Semantic Lock</span><span class="tag">Micro-Cue Bridge</span><h3>Por qué importan las unidades semánticas</h3><p>Un corte de subtítulos no siempre es un corte real del habla. El sistema fusiona solo continuaciones muy bien definidas y conserva el primer inicio y el último final.</p></article><article class="card"><span class="tag">Quota aware</span><span class="tag">Cache</span><h3>Por qué el cloud es híbrido</h3><p>YouTube puede bloquear IPs de runners de GitHub. Por eso Gemini puede comprender la URL pública y el cloud genera audio/SRT/JSON; la descarga final del vídeo y el mux pueden hacerse localmente.</p></article></div></div></section>
+  <section class="section" id="es-achievement"><div class="wrap"><div class="kicker">Logro verificado</div><h2>¿Qué ha conseguido de verdad?</h2><p class="section-intro">El hito importante no es una captura de pantalla: es un paquete Cloud Dub completo después de convertir fallos reales de cuota, capacidad, modelos retirados y timing en cambios de arquitectura.</p><div class="success"><h3>Cloud Dub #41 — validación exitosa</h3><p>La corrección Micro-Cue de v0.5.10 produjo 37 unidades bloqueadas por timestamp y completó las 37. Los chunks difíciles se midieron, compactaron con IA y resintetizaron sin elevar el techo duro de 1.10×.</p><div class="success-grid"><div><strong>37 / 37</strong><small>chunks completados</small></div><div><strong>100%</strong><small>workflow: success</small></div><div><strong>~44.8 MB</strong><small>artifact ZIP</small></div><div><strong>45</strong><small>archivos subidos</small></div><div><strong>≤ 1.10×</strong><small>política de velocidad conservada</small></div></div></div><div class="grid3"><article class="card"><h3>Resiliencia nacida de fallos</h3><p>Cambios de formato API, Python 3.13, 429, 503, modelos retirados y fallos de convergencia terminaron convertidos en reglas o tests.</p></article><article class="card"><h3>Salida auditable</h3><p>El paquete contiene <code>dubbed_audio.wav</code>, <code>dubbed.srt</code>, <code>transcript.json</code>, <code>manifest.json</code> y diagnósticos de timing.</p></article><article class="card"><h3>Base multilingüe práctica</h3><p>Persa es el destino por defecto, pero el pipeline admite otros idiomas y puede ejecutarse mediante UI local, CLI, Docker o GitHub Actions.</p></article></div></div></section>
+  <section class="section" id="es-limitations"><div class="wrap"><div class="kicker">Límites actuales</div><h2>Lo que todavía no hace</h2><div class="grid2"><article class="card"><h3>No es lip-sync fonema a fonema</h3><p>La alineación es por utterance/timestamp, no por visemas o movimiento de boca.</p></article><article class="card"><h3>La finalización cloud sigue siendo híbrida</h3><p>El audio y metadata se producen en cloud; la protección anti-bot de YouTube puede obligar a hacer el mux MP4 localmente.</p></article><article class="card"><h3>Las cuotas son externas</h3><p>Google puede cambiar límites, capacidad y nombres de modelos. El software se adapta, pero no controla la capacidad del proveedor.</p></article><article class="card"><h3>Sin clonación de voz fuente</h3><p>Usa voces preconstruidas; no pretende copiar exactamente la identidad de cada hablante.</p></article></div><div class="note">Uso responsable: dobla solo material propio, autorizado o con licencia. Guarda las claves API en variables locales o secretos cifrados, nunca en Git.</div></div></section>
+  <section class="section" id="es-roadmap"><div class="wrap"><div class="kicker">Roadmap futuro</div><h2>¿Qué conviene añadir después?</h2><p class="section-intro">Son oportunidades de ingeniería, no promesas. El mayor valor está en medir la calidad, reducir llamadas repetidas y eliminar el último paso manual.</p><div class="roadmap"><article class="road"><div class="priority">Prioridad 1</div><h3>Memoria persistente de rewrites</h3><p>Guardar compresiones exitosas por texto, idioma, voz y slot para no gastar cuota dos veces en el mismo chunk difícil.</p></article><article class="road"><div class="priority">Prioridad 1</div><h3>MP4 final 100% automático</h3><p>Añadir ingestión fiable por upload/object storage para hacer el mux cloud sin depender de descargas de YouTube desde runners.</p></article><article class="road"><div class="priority">Prioridad 1</div><h3>Quality gate automático</h3><p>Retranscribir el audio generado y puntuar fidelidad semántica, nombres/números, timing, loudness, clipping y voz ausente.</p></article><article class="road"><div class="priority">Prioridad 2</div><h3>Editor visual de transcript y timing</h3><p>Editar traducción, fusionar/dividir cues, bloquear terminología, asignar voces y regenerar solo regiones seleccionadas.</p></article><article class="road"><div class="priority">Prioridad 2</div><h3>Glosario y translation memory</h3><p>Diccionarios de nombres, marcas, términos técnicos, unidades y traducciones preferidas, con protección explícita de números y negaciones.</p></article><article class="road"><div class="priority">Prioridad 2</div><h3>Escalado multi-hablante</h3><p>Mejor diarización y asignación consistente de más de dos perfiles de voz en vídeos largos o series.</p></article><article class="road"><div class="priority">Prioridad 3</div><h3>Voice matching con consentimiento</h3><p>Similitud/clonación opcional solo con consentimiento, provenance y divulgación clara; voces preconstruidas como opción segura.</p></article><article class="road"><div class="priority">Prioridad 3</div><h3>Visemas / lip-sync</h3><p>Timing fonético/visema y conexión opcional con un modelo de lip-sync para primeros planos.</p></article><article class="road"><div class="priority">Producto</div><h3>Aplicaciones desktop standalone</h3><p>Binarios Windows/macOS/Linux sin instalación de Python y finalización cloud con un clic.</p></article><article class="road"><div class="priority">Producto</div><h3>Cola y observabilidad</h3><p>Jobs múltiples, contadores de cuota/coste, cache hit rate, latencia, clasificación de fallos e historial de calidad.</p></article></div></div></section>
+</section>
+
+</main>
+<footer><div class="wrap footer-row"><div>Gemini YouTube Dubber · MIT License · Faramarz Kowsari</div><div><a href="https://github.com/FaramarzKowsari/gemini-youtube-dubber/blob/main/README.md">README</a> · <a href="https://github.com/FaramarzKowsari/gemini-youtube-dubber/actions">Actions</a> · <a href="https://github.com/FaramarzKowsari/gemini-youtube-dubber">Repository</a></div></div></footer>
+<script>
+(function(){
+  const buttons=[...document.querySelectorAll('.lang')];
+  const panels=[...document.querySelectorAll('.lang-panel')];
+  const supported=['en','tr','es'];
+  function activate(lang){
+    if(!supported.includes(lang)) lang='en';
+    panels.forEach(p=>p.hidden=p.dataset.panel!==lang);
+    buttons.forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.lang===lang)));
+    document.documentElement.lang=lang;
+    try{localStorage.setItem('gyd-lang',lang)}catch(e){}
+    window.scrollTo({top:0,behavior:'instant'});
+  }
+  buttons.forEach(b=>b.addEventListener('click',()=>activate(b.dataset.lang)));
+  let initial='en';
+  try{initial=localStorage.getItem('gyd-lang')||''}catch(e){}
+  if(!supported.includes(initial)){
+    const browser=(navigator.language||'en').toLowerCase();
+    initial=browser.startsWith('tr')?'tr':browser.startsWith('es')?'es':'en';
+  }
+  activate(initial);
+})();
+</script>
+</body>
+</html>
