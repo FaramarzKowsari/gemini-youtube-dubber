@@ -36,13 +36,12 @@ def test_api_key_is_not_hardcoded_in_workflow():
 
 def test_cloud_workflow_is_quota_aware_and_keeps_natural_speed_guard():
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "GEMINI_TRANSCRIBE_MODEL: gemini-2.5-flash" in text
+    assert "GEMINI_TRANSCRIBE_MODEL: gemini-2.5-flash-lite" in text
     assert "GEMINI_TRANSCRIBE_FALLBACK_MODELS: ''" in text
     assert "gemini-3.7-flash" not in text
-    assert "gemini-2.5-flash-lite" not in text
     assert "DUB_TIMING_DIRECTOR: '1'" in text
     assert "DUB_TIMING_OCCUPANCY: '0.72'" in text
-    assert "DUB_TIMING_BATCH_SIZE: '40'" in text
+    assert "DUB_TIMING_BATCH_SIZE: '10'" in text
     assert "DUB_TIMING_MAX_SPEEDUP: '1.10'" in text
     assert "DUB_TIMING_EXPAND_BELOW: '0.80'" in text
     assert "DUB_TIMING_FEEDBACK_MAX_PASSES: '3'" in text

@@ -60,10 +60,10 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_DUBBER_CACHE_DIR: .tts-cache
 
-      # Quota-aware timing policy: one proven text model only. Previous runs showed
-      # Flash-Lite failing immediately and then falling through to Flash, doubling
-      # request consumption without improving timing quality.
-      GEMINI_TRANSCRIBE_MODEL: gemini-2.5-flash
+      # v0.5.8 moves timing text work to the stable, high-volume Flash-Lite model.
+      # The faithful transcript checkpoint is reused for the canonical cloud test,
+      # so this run spends the separate Flash-Lite quota on timing correction only.
+      GEMINI_TRANSCRIBE_MODEL: gemini-2.5-flash-lite
       GEMINI_TRANSCRIBE_FALLBACK_MODELS: ''
       GEMINI_HTTP_TIMEOUT_MS: '120000'
       GEMINI_TRANSCRIBE_MAX_RETRIES: '0'
@@ -86,14 +86,15 @@ jobs:
       EDGE_TTS_MAX_RETRIES: '0'
       EDGE_TTS_NETWORK_RETRIES: '1'
 
-      # Strong pre-TTS semantic shortening remains in one batch.
+      # The previous 38-item Timing Director request hit the 120s provider deadline.
+      # Smaller batches can pre-compress dialogue successfully and reduce measured
+      # per-chunk feedback requests without loosening semantic or speed constraints.
       DUB_TIMING_DIRECTOR: '1'
       DUB_TIMING_OCCUPANCY: '0.72'
-      DUB_TIMING_BATCH_SIZE: '40'
+      DUB_TIMING_BATCH_SIZE: '10'
 
-      # Measured feedback remains quota-aware. One proven model × at most three
-      # passes uses fewer requests than the former two-model × two-pass fan-out,
-      # while giving stubborn 1.13-1.15x cues one final semantic shortening chance.
+      # Keep the hard natural-rate ceiling. Stubborn chunks still get at most three
+      # measured semantic-compression passes, now using Flash-Lite quota.
       DUB_TIMING_MAX_SPEEDUP: '1.10'
       DUB_TIMING_EXPAND_BELOW: '0.80'
       DUB_TIMING_FEEDBACK_MAX_PASSES: '3'
@@ -216,10 +217,11 @@ jobs:
           fi
 
           echo "============================================================"
-          echo "Gemini YouTube Dubber v0.5.5 · stubborn-timing recovery"
+          echo "Gemini YouTube Dubber v0.5.8 · Flash-Lite timing"
           echo "Text timing primary: ${GEMINI_TRANSCRIBE_MODEL}"
           echo "Text timing fallback: none"
           echo "Pre-TTS occupancy target: ${DUB_TIMING_OCCUPANCY}"
+          echo "Timing Director batch size: ${DUB_TIMING_BATCH_SIZE}"
           echo "Measured feedback passes: ${DUB_TIMING_FEEDBACK_MAX_PASSES}"
           echo "Natural speech hard limit: ${DUB_TIMING_MAX_SPEEDUP}x"
           echo "Full pipeline attempts: 1"
@@ -273,7 +275,7 @@ jobs:
           {
             echo "## Cloud dub package is ready"
             echo ""
-            echo "v0.5.5 uses one proven Gemini timing model, up to three measured semantic-compression passes, semantic source timing units, and no per-segment padding."
+            echo "v0.5.8 uses Flash-Lite for high-volume timing work, smaller pre-TTS timing batches, semantic source timing units, and no per-segment padding."
             echo "Overlong speech is rewritten and re-synthesized instead of being rushed above 1.10x."
             echo "Short speech is accepted unchanged; the master timeline supplies silence."
             echo "See timing_report.json and timing_feedback.json for timing diagnostics."
