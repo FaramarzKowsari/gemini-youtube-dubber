@@ -18,24 +18,55 @@ def _normalize(text: str) -> str:
 
 
 def merge_semantic_continuations(
-    transcript: Transcript, *, max_gap_seconds: float = 0.05
+    transcript: Transcript,
+    *,
+    max_gap_seconds: float = 0.05,
+    max_micro_cue_seconds: float = 3.0,
+    max_merged_seconds: float = 15.0,
 ) -> Transcript:
-    """Merge contiguous same-speaker cues that clearly continue one sentence."""
+    """Merge contiguous same-speaker cues that belong to one natural speech unit.
+
+    The original semantic-lock rule merges zero-gap cues when the previous source cue
+    is clearly an unfinished sentence. v0.5.7 adds one conservative case for complete
+    but very short source cues: when a same-speaker cue is at most
+    ``max_micro_cue_seconds`` long and the next cue starts immediately, both are
+    merged as long as the combined span stays below ``max_merged_seconds``.
+
+    This prevents an artificial 1-3 second dubbing deadline from forcing meaning loss
+    or rushed speech while preserving the original first onset and final cue end.
+    """
     result = transcript.model_copy(deep=True)
     merged: list[Segment] = []
+    max_gap = max(0.0, float(max_gap_seconds))
+    micro_limit = max(0.25, float(max_micro_cue_seconds))
+    merged_limit = max(micro_limit, float(max_merged_seconds))
+
     for original in result.segments:
         current = original.model_copy(deep=True)
         if merged:
             previous = merged[-1]
             gap = float(current.start) - float(previous.end)
+            contiguous = -0.01 <= gap <= max_gap
+            same_speaker = previous.speaker == current.speaker
             incomplete = not _TERMINAL_RE.search(_normalize(previous.source_text))
-            if (-0.01 <= gap <= max(0.0, float(max_gap_seconds))
-                    and previous.speaker == current.speaker and incomplete):
+            previous_duration = max(0.0, float(previous.end) - float(previous.start))
+            combined_duration = max(0.0, float(current.end) - float(previous.start))
+            micro_cue = (
+                previous_duration <= micro_limit
+                and combined_duration <= merged_limit
+            )
+
+            if contiguous and same_speaker and (incomplete or micro_cue):
                 merged[-1] = Segment(
-                    start=float(previous.start), end=float(current.end),
+                    start=float(previous.start),
+                    end=float(current.end),
                     speaker=previous.speaker,
-                    source_text=f"{previous.source_text.rstrip()} {current.source_text.lstrip()}".strip(),
-                    target_text=f"{previous.target_text.rstrip()} {current.target_text.lstrip()}".strip(),
+                    source_text=(
+                        f"{previous.source_text.rstrip()} {current.source_text.lstrip()}"
+                    ).strip(),
+                    target_text=(
+                        f"{previous.target_text.rstrip()} {current.target_text.lstrip()}"
+                    ).strip(),
                     emotion=previous.emotion or current.emotion or "neutral",
                 )
                 continue
