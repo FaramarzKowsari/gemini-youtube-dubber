@@ -27,10 +27,10 @@ def merge_semantic_continuations(
     """Merge contiguous same-speaker cues that belong to one natural speech unit.
 
     The original semantic-lock rule merges zero-gap cues when the previous source cue
-    is clearly an unfinished sentence. v0.5.7 adds one conservative case for complete
-    but very short source cues: when a same-speaker cue is at most
-    ``max_micro_cue_seconds`` long and the next cue starts immediately, both are
-    merged as long as the combined span stays below ``max_merged_seconds``.
+    is clearly an unfinished sentence. v0.5.7 adds one conservative case for a
+    complete but very short lead-in cue: it may merge with an immediately following
+    same-speaker cue only when that following cue is substantially longer. Two
+    independent short complete sentences therefore remain separate.
 
     This prevents an artificial 1-3 second dubbing deadline from forcing meaning loss
     or rushed speech while preserving the original first onset and final cue end.
@@ -50,13 +50,21 @@ def merge_semantic_continuations(
             same_speaker = previous.speaker == current.speaker
             incomplete = not _TERMINAL_RE.search(_normalize(previous.source_text))
             previous_duration = max(0.0, float(previous.end) - float(previous.start))
+            current_duration = max(0.0, float(current.end) - float(current.start))
             combined_duration = max(0.0, float(current.end) - float(previous.start))
-            micro_cue = (
+
+            # A complete micro-cue is merged only as a true lead-in to a much longer
+            # continuous utterance. This covers source-timeline openers such as a
+            # 2.2s sentence immediately followed by ~10s of the same speaker, while
+            # preserving two independent 2s complete sentences as separate cues.
+            micro_lead_in = (
                 previous_duration <= micro_limit
+                and current_duration >= 4.0
+                and current_duration >= previous_duration * 2.0
                 and combined_duration <= merged_limit
             )
 
-            if contiguous and same_speaker and (incomplete or micro_cue):
+            if contiguous and same_speaker and (incomplete or micro_lead_in):
                 merged[-1] = Segment(
                     start=float(previous.start),
                     end=float(current.end),
